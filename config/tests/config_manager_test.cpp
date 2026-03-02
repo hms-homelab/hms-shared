@@ -209,6 +209,28 @@ llava:
     CHECK(config.llava.prompts.count("side_window") == 1);
 }
 
+TEST_CASE("ConfigManager parses gpu_enabled true", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+detection:
+  gpu_enabled: true
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.detection.gpu_enabled == true);
+}
+
+TEST_CASE("ConfigManager gpu_enabled defaults to false", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.detection.gpu_enabled == false);
+}
+
 TEST_CASE("ConfigManager throws on invalid file", "[config]") {
     REQUIRE_THROWS_AS(
         yolo::ConfigManager::load("/nonexistent/path.yaml"),

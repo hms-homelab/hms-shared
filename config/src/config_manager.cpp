@@ -76,6 +76,7 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
             det["immediate_notification_confidence"].as<double>(0.70);
         config.detection.iou_threshold = det["iou_threshold"].as<double>(0.45);
         config.detection.max_detections = det["max_detections"].as<int>(10);
+        config.detection.gpu_enabled = det["gpu_enabled"].as<bool>(false);
 
         if (auto classes_node = det["classes"]) {
             for (const auto& cls : classes_node) {

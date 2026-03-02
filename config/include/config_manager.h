@@ -31,6 +31,7 @@ struct DetectionConfig {
     double iou_threshold = 0.45;
     std::vector<std::string> classes;
     int max_detections = 10;
+    bool gpu_enabled = false;
 };
 
 struct MqttConfig {
