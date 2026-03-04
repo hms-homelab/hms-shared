@@ -51,5 +51,38 @@ json get_cameras_status(
     const std::unordered_map<std::string, CameraConfig>& cameras
 );
 
+// --- Search ---
+
+/// Parameters for full-text + semantic search
+struct SearchParams {
+    std::string query;
+    std::vector<std::string> class_filter;
+    std::optional<std::string> camera_id;
+    std::optional<std::string> start_date, end_date;
+    int limit = 50;
+    std::string mode = "auto";  // "auto" | "fts" | "semantic"
+};
+
+/// Full-text search over ai_vision_context + periodic_snapshots
+json search_events_fts(DbPool& db, const SearchParams& params);
+
+/// Semantic (vector) search — takes pre-computed query embedding
+json search_events_semantic(DbPool& db, const SearchParams& params,
+                            const std::vector<float>& query_embedding);
+
+/// Get periodic snapshots for a camera + date (for timeline display)
+json get_periodic_snapshots(DbPool& db, const std::string& camera_id,
+                            const std::string& date);
+
+/// Insert a periodic snapshot record
+void insert_periodic_snapshot(DbPool& db,
+                              const std::string& camera_id,
+                              const std::string& snapshot_filename,
+                              const std::string& thumbnail_filename,
+                              const std::string& context_text,
+                              const std::vector<float>& embedding,
+                              const std::string& source_model,
+                              bool is_valid);
+
 } // namespace api_queries
 } // namespace yolo

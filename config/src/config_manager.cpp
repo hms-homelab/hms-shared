@@ -56,6 +56,8 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
                 cam_node["confidence_threshold"].as<double>(0.5);
             cam.immediate_notification_confidence =
                 cam_node["immediate_notification_confidence"].as<double>(0.70);
+            cam.periodic_snapshot_interval =
+                cam_node["periodic_snapshot_interval"].as<int>(0);
 
             config.cameras[cam.id] = std::move(cam);
         }
@@ -124,6 +126,8 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
             tl["snapshots_dir"].as<std::string>("/mnt/ssd/snapshots");
         config.timeline.detection_service_url =
             tl["detection_service_url"].as<std::string>("http://localhost:8000");
+        config.timeline.ollama_url =
+            tl["ollama_url"].as<std::string>("http://localhost:11434");
 
         if (auto cors = tl["cors_origins"]) {
             config.timeline.cors_origins.clear();

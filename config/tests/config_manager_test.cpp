@@ -237,3 +237,81 @@ TEST_CASE("ConfigManager throws on invalid file", "[config]") {
         std::runtime_error
     );
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Periodic Snapshots + Search config tests
+// ────────────────────────────────────────────────────────────────────
+
+TEST_CASE("ConfigManager loads periodic_snapshot_interval", "[config]") {
+    TempConfig cfg(R"(
+cameras:
+  patio:
+    name: "Patio"
+    periodic_snapshot_interval: 300
+  front_door:
+    name: "Front Door"
+    periodic_snapshot_interval: 600
+  side_window:
+    name: "Side Window"
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.cameras.at("patio").periodic_snapshot_interval == 300);
+    CHECK(config.cameras.at("front_door").periodic_snapshot_interval == 600);
+    // Default when not specified
+    CHECK(config.cameras.at("side_window").periodic_snapshot_interval == 0);
+}
+
+TEST_CASE("ConfigManager periodic_snapshot_interval defaults to 0 (disabled)", "[config]") {
+    TempConfig cfg(R"(
+cameras:
+  test:
+    name: "Test"
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.cameras.at("test").periodic_snapshot_interval == 0);
+}
+
+TEST_CASE("ConfigManager loads ollama_url in timeline section", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+timeline:
+  ollama_url: "http://10.0.0.5:11434"
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.timeline.ollama_url == "http://10.0.0.5:11434");
+}
+
+TEST_CASE("ConfigManager ollama_url defaults to localhost", "[config]") {
+    TempConfig cfg(R"(
+cameras: {}
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.timeline.ollama_url == "http://localhost:11434");
+}
+
+TEST_CASE("ConfigManager loads both periodic and timeline config together", "[config]") {
+    TempConfig cfg(R"(
+cameras:
+  patio:
+    name: "Patio"
+    enabled: true
+    periodic_snapshot_interval: 300
+timeline:
+  ollama_url: "http://nvr:11434"
+  port: 8080
+)");
+
+    auto config = yolo::ConfigManager::load(cfg.path);
+
+    CHECK(config.cameras.at("patio").periodic_snapshot_interval == 300);
+    CHECK(config.timeline.ollama_url == "http://nvr:11434");
+    CHECK(config.timeline.port == 8080);
+}

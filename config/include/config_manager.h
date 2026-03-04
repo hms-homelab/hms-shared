@@ -16,6 +16,7 @@ struct CameraConfig {
     std::vector<std::string> classes;
     double confidence_threshold = 0.5;
     double immediate_notification_confidence = 0.70;
+    int periodic_snapshot_interval = 0;  // seconds between ambient snapshots (0 = disabled)
 };
 
 struct BufferConfig {
@@ -65,6 +66,7 @@ struct TimelineConfig {
     std::string events_dir = "/mnt/ssd/events";
     std::string snapshots_dir = "/mnt/ssd/snapshots";
     std::string detection_service_url = "http://localhost:8000";
+    std::string ollama_url = "http://localhost:11434";
     std::vector<std::string> cors_origins = {"http://localhost:4200"};
 };
 

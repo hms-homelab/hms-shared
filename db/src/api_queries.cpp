@@ -331,4 +331,322 @@ json get_cameras_status(
     return result;
 }
 
+// --- Search functions ---
+
+json search_events_fts(DbPool& db, const SearchParams& params) {
+    try {
+        auto conn = db.acquire();
+        pqxx::nontransaction txn(*conn);
+
+        // Build tsquery from user input
+        std::string ts_query_str = params.query;
+        // Replace spaces with & for AND matching
+        for (auto& ch : ts_query_str) {
+            if (ch == ' ') ch = '&';
+        }
+
+        std::ostringstream sql;
+        // Search motion events (ai_vision_context)
+        sql << R"(
+            SELECT * FROM (
+                SELECT
+                    'event' as type,
+                    de.event_id as id,
+                    de.camera_id,
+                    de.camera_name,
+                    de.started_at as timestamp,
+                    de.recording_url,
+                    de.snapshot_url,
+                    de.total_detections,
+                    de.duration_seconds,
+                    STRING_AGG(DISTINCT d.class_name, ', ' ORDER BY d.class_name) as detected_classes,
+                    avc.context_text as ai_context,
+                    ts_rank(avc.context_tsv, plainto_tsquery('english', )" << txn.quote(params.query) << R"()) as rank
+                FROM ai_vision_context avc
+                JOIN detection_events de ON avc.event_id = de.event_id
+                LEFT JOIN detections d ON de.event_id = d.event_id
+                WHERE avc.context_tsv @@ plainto_tsquery('english', )" << txn.quote(params.query) << R"()
+        )";
+
+        if (params.camera_id) sql << " AND de.camera_id = " << txn.quote(*params.camera_id);
+        if (params.start_date) sql << " AND de.started_at >= " << txn.quote(*params.start_date);
+        if (params.end_date) sql << " AND de.started_at < " << txn.quote(*params.end_date);
+
+        if (!params.class_filter.empty()) {
+            sql << " AND EXISTS (SELECT 1 FROM detections d2 WHERE d2.event_id = de.event_id AND d2.class_name IN (";
+            for (size_t i = 0; i < params.class_filter.size(); ++i) {
+                if (i > 0) sql << ",";
+                sql << txn.quote(params.class_filter[i]);
+            }
+            sql << "))";
+        }
+
+        sql << R"(
+                GROUP BY de.event_id, de.camera_id, de.camera_name, de.started_at,
+                         de.recording_url, de.snapshot_url, de.total_detections,
+                         de.duration_seconds, avc.context_text, avc.context_tsv
+
+                UNION ALL
+
+                SELECT
+                    'snapshot' as type,
+                    ps.id::text as id,
+                    ps.camera_id,
+                    ps.camera_id as camera_name,
+                    ps.captured_at as timestamp,
+                    NULL as recording_url,
+                    ps.snapshot_filename as snapshot_url,
+                    0 as total_detections,
+                    NULL::float as duration_seconds,
+                    NULL as detected_classes,
+                    ps.context_text as ai_context,
+                    ts_rank(ps.context_tsv, plainto_tsquery('english', )" << txn.quote(params.query) << R"()) as rank
+                FROM periodic_snapshots ps
+                WHERE ps.context_tsv @@ plainto_tsquery('english', )" << txn.quote(params.query) << R"()
+                  AND ps.is_valid = true
+        )";
+
+        if (params.camera_id) sql << " AND ps.camera_id = " << txn.quote(*params.camera_id);
+        if (params.start_date) sql << " AND ps.captured_at >= " << txn.quote(*params.start_date);
+        if (params.end_date) sql << " AND ps.captured_at < " << txn.quote(*params.end_date);
+
+        sql << ") combined ORDER BY rank DESC LIMIT " << params.limit;
+
+        auto result = txn.exec(sql.str());
+
+        json events = json::array();
+        for (const auto& row : result) {
+            json item;
+            item["type"]             = field_or_null(row, 0);
+            item["id"]               = field_or_null(row, 1);
+            item["camera_id"]        = field_or_null(row, 2);
+            item["camera_name"]      = field_or_null(row, 3);
+            item["timestamp"]        = timestamp_or_null(row, 4);
+            item["recording_url"]    = field_or_null(row, 5);
+            item["snapshot_url"]     = field_or_null(row, 6);
+            item["total_detections"] = field_as_int_or_null(row, 7);
+            item["duration_seconds"] = field_as_double_or_null(row, 8);
+            item["detected_classes"] = field_or_null(row, 9);
+            item["ai_context"]       = field_or_null(row, 10);
+            item["rank"]             = field_as_double_or_null(row, 11);
+            events.push_back(std::move(item));
+        }
+
+        return json{
+            {"events", events},
+            {"count", static_cast<int>(events.size())},
+            {"search_mode", "fts"},
+            {"query", params.query}
+        };
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error in FTS search: {}", e.what());
+        return json{{"events", json::array()}, {"count", 0}, {"search_mode", "fts"}, {"query", params.query}};
+    }
+}
+
+json search_events_semantic(DbPool& db, const SearchParams& params,
+                            const std::vector<float>& query_embedding) {
+    try {
+        auto conn = db.acquire();
+        pqxx::nontransaction txn(*conn);
+
+        // Format embedding as pgvector literal: [0.1,0.2,...]
+        std::ostringstream vec_str;
+        vec_str << "[";
+        for (size_t i = 0; i < query_embedding.size(); ++i) {
+            if (i > 0) vec_str << ",";
+            vec_str << query_embedding[i];
+        }
+        vec_str << "]";
+        std::string vec_literal = vec_str.str();
+
+        std::ostringstream sql;
+        sql << R"(
+            SELECT * FROM (
+                SELECT
+                    'event' as type,
+                    de.event_id as id,
+                    de.camera_id,
+                    de.camera_name,
+                    de.started_at as timestamp,
+                    de.recording_url,
+                    de.snapshot_url,
+                    de.total_detections,
+                    de.duration_seconds,
+                    STRING_AGG(DISTINCT d.class_name, ', ' ORDER BY d.class_name) as detected_classes,
+                    avc.context_text as ai_context,
+                    1 - (avc.context_embedding <=> )" << txn.quote(vec_literal) << R"(::vector) as similarity
+                FROM ai_vision_context avc
+                JOIN detection_events de ON avc.event_id = de.event_id
+                LEFT JOIN detections d ON de.event_id = d.event_id
+                WHERE avc.context_embedding IS NOT NULL
+        )";
+
+        if (params.camera_id) sql << " AND de.camera_id = " << txn.quote(*params.camera_id);
+        if (params.start_date) sql << " AND de.started_at >= " << txn.quote(*params.start_date);
+        if (params.end_date) sql << " AND de.started_at < " << txn.quote(*params.end_date);
+
+        sql << R"(
+                GROUP BY de.event_id, de.camera_id, de.camera_name, de.started_at,
+                         de.recording_url, de.snapshot_url, de.total_detections,
+                         de.duration_seconds, avc.context_text, avc.context_embedding
+
+                UNION ALL
+
+                SELECT
+                    'snapshot' as type,
+                    ps.id::text as id,
+                    ps.camera_id,
+                    ps.camera_id as camera_name,
+                    ps.captured_at as timestamp,
+                    NULL as recording_url,
+                    ps.snapshot_filename as snapshot_url,
+                    0 as total_detections,
+                    NULL::float as duration_seconds,
+                    NULL as detected_classes,
+                    ps.context_text as ai_context,
+                    1 - (ps.context_embedding <=> )" << txn.quote(vec_literal) << R"(::vector) as similarity
+                FROM periodic_snapshots ps
+                WHERE ps.context_embedding IS NOT NULL
+                  AND ps.is_valid = true
+        )";
+
+        if (params.camera_id) sql << " AND ps.camera_id = " << txn.quote(*params.camera_id);
+        if (params.start_date) sql << " AND ps.captured_at >= " << txn.quote(*params.start_date);
+        if (params.end_date) sql << " AND ps.captured_at < " << txn.quote(*params.end_date);
+
+        sql << ") combined ORDER BY similarity DESC LIMIT " << params.limit;
+
+        auto result = txn.exec(sql.str());
+
+        json events = json::array();
+        for (const auto& row : result) {
+            json item;
+            item["type"]             = field_or_null(row, 0);
+            item["id"]               = field_or_null(row, 1);
+            item["camera_id"]        = field_or_null(row, 2);
+            item["camera_name"]      = field_or_null(row, 3);
+            item["timestamp"]        = timestamp_or_null(row, 4);
+            item["recording_url"]    = field_or_null(row, 5);
+            item["snapshot_url"]     = field_or_null(row, 6);
+            item["total_detections"] = field_as_int_or_null(row, 7);
+            item["duration_seconds"] = field_as_double_or_null(row, 8);
+            item["detected_classes"] = field_or_null(row, 9);
+            item["ai_context"]       = field_or_null(row, 10);
+            item["similarity"]       = field_as_double_or_null(row, 11);
+            events.push_back(std::move(item));
+        }
+
+        return json{
+            {"events", events},
+            {"count", static_cast<int>(events.size())},
+            {"search_mode", "semantic"},
+            {"query", params.query}
+        };
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error in semantic search: {}", e.what());
+        return json{{"events", json::array()}, {"count", 0}, {"search_mode", "semantic"}, {"query", params.query}};
+    }
+}
+
+json get_periodic_snapshots(DbPool& db, const std::string& camera_id,
+                            const std::string& date) {
+    try {
+        auto date_tp = time_utils::from_date_string(date);
+        if (!date_tp) return json::array();
+
+        auto start_str = time_utils::to_iso8601(time_utils::start_of_day(*date_tp));
+        auto end_str   = time_utils::to_iso8601(time_utils::end_of_day(*date_tp));
+
+        auto conn = db.acquire();
+        pqxx::nontransaction txn(*conn);
+
+        auto result = txn.exec(R"(
+            SELECT id, camera_id, captured_at, snapshot_filename,
+                   thumbnail_filename, context_text, is_valid
+            FROM periodic_snapshots
+            WHERE camera_id = $1 AND captured_at >= $2 AND captured_at < $3
+              AND is_valid = true
+            ORDER BY captured_at DESC
+        )", pqxx::params{camera_id, start_str, end_str});
+
+        json snapshots = json::array();
+        for (const auto& row : result) {
+            snapshots.push_back({
+                {"type", "snapshot"},
+                {"snapshot_id", row[0].as<int>()},
+                {"camera_id", row[1].c_str()},
+                {"captured_at", time_utils::pg_timestamp_to_iso8601(row[2].c_str())},
+                {"snapshot_url", row[3].c_str()},
+                {"thumbnail_url", row[4].is_null() ? json(nullptr) : json(row[4].c_str())},
+                {"ai_context", row[5].is_null() ? json(nullptr) : json(row[5].c_str())},
+                {"is_valid", row[6].as<bool>()}
+            });
+        }
+
+        return snapshots;
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error querying periodic snapshots for {}: {}", camera_id, e.what());
+        return json::array();
+    }
+}
+
+void insert_periodic_snapshot(DbPool& db,
+                              const std::string& camera_id,
+                              const std::string& snapshot_filename,
+                              const std::string& thumbnail_filename,
+                              const std::string& context_text,
+                              const std::vector<float>& embedding,
+                              const std::string& source_model,
+                              bool is_valid) {
+    try {
+        auto conn = db.acquire();
+        pqxx::work txn(*conn);
+
+        // Format embedding as pgvector literal
+        std::string vec_literal;
+        if (!embedding.empty()) {
+            std::ostringstream oss;
+            oss << "[";
+            for (size_t i = 0; i < embedding.size(); ++i) {
+                if (i > 0) oss << ",";
+                oss << embedding[i];
+            }
+            oss << "]";
+            vec_literal = oss.str();
+        }
+
+        if (!vec_literal.empty()) {
+            txn.exec(R"(
+                INSERT INTO periodic_snapshots
+                    (camera_id, captured_at, snapshot_filename, thumbnail_filename,
+                     context_text, context_embedding, source_model, is_valid)
+                VALUES ($1, NOW(), $2, $3, $4, $5::vector, $6, $7)
+            )", pqxx::params{
+                camera_id, snapshot_filename, thumbnail_filename,
+                context_text, vec_literal, source_model, is_valid
+            });
+        } else {
+            txn.exec(R"(
+                INSERT INTO periodic_snapshots
+                    (camera_id, captured_at, snapshot_filename, thumbnail_filename,
+                     context_text, source_model, is_valid)
+                VALUES ($1, NOW(), $2, $3, $4, $5, $6)
+            )", pqxx::params{
+                camera_id, snapshot_filename, thumbnail_filename,
+                context_text, source_model, is_valid
+            });
+        }
+
+        txn.commit();
+        spdlog::debug("Inserted periodic snapshot {} for {}", snapshot_filename, camera_id);
+
+    } catch (const std::exception& e) {
+        spdlog::error("Error inserting periodic snapshot for {}: {}", camera_id, e.what());
+    }
+}
+
 } // namespace yolo::api_queries
