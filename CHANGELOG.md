@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.3.0 (2026-03-11)
+
+### Added
+- **periodic_vision config**: Separate `LlavaConfig` for periodic snapshot vision model (e.g. moondream), parsed from `periodic_vision` YAML section
+
 ## v1.2.0 (2026-03-04)
 
 ### Added

@@ -156,6 +156,27 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
             config.llava.default_prompt);
     }
 
+    // Parse periodic_vision settings (smaller model for ambient snapshots, e.g. moondream)
+    if (auto pv = root["periodic_vision"]) {
+        config.periodic_vision.enabled = pv["enabled"].as<bool>(false);
+        config.periodic_vision.endpoint = pv["endpoint"].as<std::string>(
+            config.llava.endpoint);  // default to same Ollama instance
+        config.periodic_vision.model = pv["model"].as<std::string>("moondream:1.8b-v2-q4_K_M");
+        config.periodic_vision.max_words = pv["max_words"].as<int>(20);
+        config.periodic_vision.timeout_seconds = pv["timeout_seconds"].as<int>(30);
+
+        if (auto prompts = pv["prompts"]) {
+            for (auto it = prompts.begin(); it != prompts.end(); ++it) {
+                config.periodic_vision.prompts[it->first.as<std::string>()] =
+                    it->second.as<std::string>();
+            }
+        }
+
+        config.periodic_vision.default_prompt = pv["default_prompt"].as<std::string>(
+            "In 20 words or less, describe the scene. What do you see? "
+            "Include weather, lighting, and any people, animals, or vehicles.");
+    }
+
     // Parse logging settings
     if (auto log = root["logging"]) {
         config.logging.level = log["level"].as<std::string>("info");

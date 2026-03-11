@@ -96,6 +96,7 @@ struct AppConfig {
     DatabaseConfig database;
     TimelineConfig timeline;
     LlavaConfig llava;
+    LlavaConfig periodic_vision;  // Separate vision model for periodic snapshots (e.g. moondream)
     LoggingConfig logging;
 };
 
