@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(hms_shared VERSION 1.3.0 LANGUAGES CXX)
+project(hms_shared VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,6 +31,8 @@ if(NOT TARGET PahoMqttCpp::paho-mqttpp3)
     find_package(PahoMqttCpp REQUIRED)
 endif()
 
+find_package(CURL REQUIRED)
+
 # ── Static library ───────────────────────────────────────────────────────────
 
 add_library(hms_shared STATIC
@@ -40,6 +42,7 @@ add_library(hms_shared STATIC
     db/src/api_queries.cpp
     db/src/event_logger.cpp
     mqtt/src/mqtt_client.cpp
+    llm/src/llm_client.cpp
 )
 
 target_include_directories(hms_shared PUBLIC
@@ -47,6 +50,7 @@ target_include_directories(hms_shared PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/common/include
     ${CMAKE_CURRENT_SOURCE_DIR}/db/include
     ${CMAKE_CURRENT_SOURCE_DIR}/mqtt/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/llm/include
 )
 
 target_link_libraries(hms_shared PUBLIC
@@ -56,6 +60,23 @@ target_link_libraries(hms_shared PUBLIC
     PkgConfig::pqxx
     eclipse-paho-mqtt-c::paho-mqtt3as
     PahoMqttCpp::paho-mqttpp3
+    CURL::libcurl
+)
+
+# ── Lightweight LLM-only target ──────────────────────────────────────────────
+# For services that only need the LLM client (no DB, MQTT, config deps)
+
+add_library(hms_llm STATIC
+    llm/src/llm_client.cpp
+)
+
+target_include_directories(hms_llm PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/llm/include
+)
+
+target_link_libraries(hms_llm PUBLIC
+    nlohmann_json::nlohmann_json
+    CURL::libcurl
 )
 
 # ── Tests (ON when standalone, OFF when consumed) ────────────────────────────
