@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
+#include <unistd.h>
 
 namespace hms {
 
