@@ -140,10 +140,14 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
     // Parse llava vision context settings
     if (auto llava = root["llava"]) {
         config.llava.enabled = llava["enabled"].as<bool>(false);
+        config.llava.provider = llava["provider"].as<std::string>("ollama");
         config.llava.endpoint = llava["endpoint"].as<std::string>("http://localhost:8098");
         config.llava.model = llava["model"].as<std::string>("llava:7b");
+        config.llava.api_key = llava["api_key"].as<std::string>("");
         config.llava.max_words = llava["max_words"].as<int>(15);
         config.llava.timeout_seconds = llava["timeout_seconds"].as<int>(60);
+        config.llava.temperature = llava["temperature"].as<double>(0.3);
+        config.llava.max_tokens = llava["max_tokens"].as<int>(256);
 
         if (auto prompts = llava["prompts"]) {
             for (auto it = prompts.begin(); it != prompts.end(); ++it) {
@@ -159,11 +163,15 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
     // Parse periodic_vision settings (smaller model for ambient snapshots, e.g. moondream)
     if (auto pv = root["periodic_vision"]) {
         config.periodic_vision.enabled = pv["enabled"].as<bool>(false);
+        config.periodic_vision.provider = pv["provider"].as<std::string>("ollama");
         config.periodic_vision.endpoint = pv["endpoint"].as<std::string>(
             config.llava.endpoint);  // default to same Ollama instance
         config.periodic_vision.model = pv["model"].as<std::string>("moondream:1.8b-v2-q4_K_M");
+        config.periodic_vision.api_key = pv["api_key"].as<std::string>("");
         config.periodic_vision.max_words = pv["max_words"].as<int>(20);
         config.periodic_vision.timeout_seconds = pv["timeout_seconds"].as<int>(30);
+        config.periodic_vision.temperature = pv["temperature"].as<double>(0.3);
+        config.periodic_vision.max_tokens = pv["max_tokens"].as<int>(256);
 
         if (auto prompts = pv["prompts"]) {
             for (auto it = prompts.begin(); it != prompts.end(); ++it) {

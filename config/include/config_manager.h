@@ -66,10 +66,14 @@ struct TimelineConfig {
 
 struct LlavaConfig {
     bool enabled = false;
+    std::string provider = "ollama";  // "ollama", "openai", "gemini", "anthropic"
     std::string endpoint = "http://localhost:8098";
     std::string model = "llava:7b";
+    std::string api_key;              // for cloud providers
     int max_words = 15;
     int timeout_seconds = 60;
+    double temperature = 0.3;
+    int max_tokens = 256;
     std::unordered_map<std::string, std::string> prompts;  // camera_id → template
     std::string default_prompt = "In {max_words} words or less, describe only the {class} in the green box. Start with 'A {class} is' and describe its action.";
 };

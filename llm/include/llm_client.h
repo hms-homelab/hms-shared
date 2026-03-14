@@ -1,8 +1,10 @@
 #pragma once
 
-#include <string>
-#include <optional>
+#include <atomic>
 #include <functional>
+#include <optional>
+#include <string>
+#include <vector>
 #include <curl/curl.h>
 
 namespace hms {
@@ -34,6 +36,23 @@ struct LLMConfig {
 };
 
 /**
+ * Image data for vision requests
+ */
+struct LLMImage {
+    std::string base64_data;
+    std::string mime_type = "image/jpeg";
+};
+
+/**
+ * Response from a vision/generate call with metadata
+ */
+struct LLMResponse {
+    std::optional<std::string> text;
+    bool was_aborted = false;
+    double elapsed_seconds = 0;
+};
+
+/**
  * LLMClient - Multi-provider LLM client for HMS services
  *
  * Supports Ollama, OpenAI/ChatGPT, Google Gemini, and Anthropic Claude.
@@ -51,7 +70,7 @@ struct LLMConfig {
 class LLMClient {
 public:
     explicit LLMClient(const LLMConfig& config);
-    ~LLMClient();
+    ~LLMClient() = default;
 
     LLMClient(const LLMClient&) = delete;
     LLMClient& operator=(const LLMClient&) = delete;
@@ -63,6 +82,29 @@ public:
      * @return Generated text, or nullopt on failure
      */
     std::optional<std::string> generate(const std::string& prompt);
+
+    /**
+     * Generate text from a prompt with images (vision)
+     *
+     * @param prompt Complete prompt text
+     * @param images Vector of base64-encoded images
+     * @param abort_flag Optional atomic flag to abort the request mid-flight
+     * @return LLMResponse with text, abort status, and elapsed time
+     */
+    LLMResponse generateVision(const std::string& prompt,
+                                const std::vector<LLMImage>& images,
+                                const std::atomic<bool>* abort_flag = nullptr);
+
+    /**
+     * Base64-encode binary data (e.g. JPEG image bytes)
+     */
+    static std::string base64Encode(const std::vector<unsigned char>& data);
+
+    /**
+     * Force Ollama to unload a model from VRAM (keep_alive=0)
+     */
+    static void forceUnloadModel(const std::string& ollama_endpoint,
+                                  const std::string& model_name);
 
     /**
      * Check if client is configured and ready
@@ -103,16 +145,22 @@ public:
 
 private:
     LLMConfig config_;
-    CURL* curl_;
 
     std::optional<std::string> generateOllama(const std::string& prompt);
     std::optional<std::string> generateOpenAI(const std::string& prompt);
     std::optional<std::string> generateGemini(const std::string& prompt);
     std::optional<std::string> generateAnthropic(const std::string& prompt);
 
+    std::optional<std::string> generateOllamaVision(const std::string& prompt, const std::vector<LLMImage>& images, const std::atomic<bool>* abort_flag = nullptr);
+    std::optional<std::string> generateOpenAIVision(const std::string& prompt, const std::vector<LLMImage>& images, const std::atomic<bool>* abort_flag = nullptr);
+    std::optional<std::string> generateGeminiVision(const std::string& prompt, const std::vector<LLMImage>& images, const std::atomic<bool>* abort_flag = nullptr);
+    std::optional<std::string> generateAnthropicVision(const std::string& prompt, const std::vector<LLMImage>& images, const std::atomic<bool>* abort_flag = nullptr);
+
     std::optional<std::string> httpPost(const std::string& url,
                                          const std::string& body,
-                                         struct curl_slist* headers);
+                                         struct curl_slist* headers,
+                                         const std::atomic<bool>* abort_flag = nullptr,
+                                         bool* was_aborted = nullptr);
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
 };
