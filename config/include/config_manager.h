@@ -35,15 +35,8 @@ struct DetectionConfig {
     bool gpu_enabled = false;
 };
 
-struct MqttConfig {
-    std::string broker = "localhost";
-    int port = 1883;
-    std::string username;
-    std::string password;
-    std::string client_id;          // Empty = auto-generate from PID
-    std::string topic_prefix;       // Empty = no LWT status topic
-    int qos = 1;
-};
+// MqttConfig is defined in mqtt/include/mqtt_config.h (standalone, no yaml dep)
+#include "mqtt_config.h"
 
 struct ApiConfig {
     std::string host = "0.0.0.0";

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config_manager.h"
+#include "mqtt_config.h"
 
 #include <functional>
 #include <map>
