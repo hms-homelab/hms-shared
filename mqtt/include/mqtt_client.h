@@ -28,17 +28,19 @@ public:
     MqttClient& operator=(const MqttClient&) = delete;
 
     /// Connect to broker (blocking, with timeout). Returns true on success.
-    /// Graceful degradation: failure does not throw, just logs and returns false.
     bool connect();
 
     /// Disconnect gracefully
     void disconnect();
 
-    /// Fire-and-forget publish (safe to call from any thread, including Paho callbacks)
-    void publish(const std::string& topic, const std::string& payload,
+    /// Publish to a topic. Returns true if the message was handed to Paho.
+    bool publish(const std::string& topic, const std::string& payload,
                  int qos = 1, bool retain = false);
 
-    /// Subscribe to topics with a callback. Performs a single batch subscribe call.
+    /// Subscribe to a single topic with a callback.
+    bool subscribe(const std::string& topic, MessageCallback callback, int qos = 1);
+
+    /// Subscribe to multiple topics with a single callback (batch).
     void subscribe(const std::vector<std::string>& topics,
                    MessageCallback callback, int qos = 1);
 
@@ -54,7 +56,6 @@ private:
     void connection_lost(const std::string& cause) override;
     void message_arrived(mqtt::const_message_ptr msg) override;
 
-    /// Check if a topic matches a subscription pattern (supports + and # wildcards)
     static bool topicMatches(const std::string& pattern, const std::string& topic);
 
     MqttConfig config_;
@@ -62,9 +63,8 @@ private:
     mqtt::connect_options conn_opts_;
 
     mutable std::recursive_mutex mutex_;
-    std::map<std::string, MessageCallback> subscriptions_;  // pattern → callback
+    std::map<std::string, MessageCallback> subscriptions_;
 
-    // For re-subscribing after reconnect
     struct PendingSub {
         std::vector<std::string> topics;
         int qos;

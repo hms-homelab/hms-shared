@@ -40,7 +40,8 @@ struct MqttConfig {
     int port = 1883;
     std::string username;
     std::string password;
-    std::string topic_prefix = "yolo_detection";
+    std::string client_id;          // Empty = auto-generate from PID
+    std::string topic_prefix;       // Empty = no LWT status topic
     int qos = 1;
 };
 

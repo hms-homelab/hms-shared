@@ -10,22 +10,29 @@ MqttClient::MqttClient(const MqttConfig& config)
     : config_(config)
 {
     std::string broker_uri = "tcp://" + config_.broker + ":" + std::to_string(config_.port);
-    std::string client_id = "hms_detection_" + std::to_string(::getpid());
 
-    client_ = std::make_unique<mqtt::async_client>(broker_uri, client_id);
+    // Client ID: use configured value or auto-generate from PID
+    std::string cid = config_.client_id.empty()
+        ? ("hms_" + std::to_string(::getpid()))
+        : config_.client_id;
+
+    client_ = std::make_unique<mqtt::async_client>(broker_uri, cid);
     client_->set_callback(*this);
 
-    // LWT: publish "offline" on unexpected disconnect
-    std::string will_topic = config_.topic_prefix + "/status";
-    mqtt::will_options will(will_topic, std::string("offline"), 1, true);
-
-    conn_opts_ = mqtt::connect_options_builder()
+    auto builder = mqtt::connect_options_builder()
         .automatic_reconnect(std::chrono::seconds(1), std::chrono::seconds(64))
         .clean_session(true)
         .keep_alive_interval(std::chrono::seconds(60))
-        .connect_timeout(std::chrono::seconds(10))
-        .will(std::move(will))
-        .finalize();
+        .connect_timeout(std::chrono::seconds(10));
+
+    // LWT: publish "offline" on unexpected disconnect (only if topic_prefix set)
+    if (!config_.topic_prefix.empty()) {
+        std::string will_topic = config_.topic_prefix + "/status";
+        mqtt::will_options will(will_topic, std::string("offline"), 1, true);
+        builder.will(std::move(will));
+    }
+
+    conn_opts_ = builder.finalize();
 
     if (!config_.username.empty()) {
         conn_opts_.set_user_name(config_.username);
@@ -62,8 +69,9 @@ void MqttClient::disconnect() {
 
     try {
         if (client_->is_connected()) {
-            // Publish offline status before disconnecting
-            publish(config_.topic_prefix + "/status", "offline", 1, true);
+            if (!config_.topic_prefix.empty()) {
+                publish(config_.topic_prefix + "/status", "offline", 1, true);
+            }
             auto tok = client_->disconnect();
             tok->wait_for(std::chrono::seconds(2));
         }
@@ -72,38 +80,39 @@ void MqttClient::disconnect() {
     }
 }
 
-void MqttClient::publish(const std::string& topic, const std::string& payload,
+bool MqttClient::publish(const std::string& topic, const std::string& payload,
                           int qos, bool retain) {
-    if (!client_ || !client_->is_connected()) return;
+    if (!client_ || !client_->is_connected()) return false;
 
     try {
-        // Force QoS 0 for non-retained messages — true fire-and-forget,
-        // no delivery token tracking, no blocking on internal buffer.
         int effective_qos = retain ? qos : 0;
-        auto tok = client_->publish(topic, payload.data(), payload.size(),
-                                    effective_qos, retain);
-        // Don't wait on the token — let it complete asynchronously
+        client_->publish(topic, payload.data(), payload.size(),
+                         effective_qos, retain);
+        return true;
     } catch (const mqtt::exception& e) {
         spdlog::warn("MQTT: publish failed on {}: {}", topic, e.what());
+        return false;
     }
+}
+
+bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, int qos) {
+    subscribe(std::vector<std::string>{topic}, std::move(callback), qos);
+    return true;
 }
 
 void MqttClient::subscribe(const std::vector<std::string>& topics,
                             MessageCallback callback, int qos) {
     std::lock_guard lock(mutex_);
 
-    // Register callback for each topic pattern
     for (const auto& topic : topics) {
         subscriptions_[topic] = callback;
     }
 
-    // Save for re-subscribe on reconnect
     pending_subs_.push_back({topics, qos});
 
     if (!client_ || !client_->is_connected()) return;
 
     try {
-        // Batch subscribe: single call with all topics
         auto topic_coll = mqtt::string_collection::create(topics);
         std::vector<int> qos_levels(topics.size(), qos);
         client_->subscribe(topic_coll, qos_levels)->wait_for(std::chrono::seconds(5));
@@ -120,18 +129,16 @@ bool MqttClient::isConnected() const {
     return client_ && client_->is_connected();
 }
 
-// --- Paho callbacks (called on Paho's internal thread) ---
+// --- Paho callbacks ---
 
 void MqttClient::connected(const std::string& cause) {
     spdlog::info("MQTT: connected ({})", cause.empty() ? "initial" : cause);
 
-    // Re-subscribe to all topics after reconnect
     std::lock_guard lock(mutex_);
     for (const auto& sub : pending_subs_) {
         try {
             auto topic_coll = mqtt::string_collection::create(sub.topics);
             std::vector<int> qos_levels(sub.topics.size(), sub.qos);
-            // Fire-and-forget from callback — no wait
             client_->subscribe(topic_coll, qos_levels);
         } catch (const mqtt::exception& e) {
             spdlog::warn("MQTT: re-subscribe failed: {}", e.what());
@@ -156,13 +163,12 @@ void MqttClient::message_arrived(mqtt::const_message_ptr msg) {
             } catch (const std::exception& e) {
                 spdlog::error("MQTT: callback error for {}: {}", topic, e.what());
             }
-            return;  // first match wins
+            return;
         }
     }
 }
 
 bool MqttClient::topicMatches(const std::string& pattern, const std::string& topic) {
-    // Split both into segments
     auto split = [](const std::string& s) {
         std::vector<std::string> parts;
         std::istringstream iss(s);
@@ -179,17 +185,9 @@ bool MqttClient::topicMatches(const std::string& pattern, const std::string& top
     size_t pi = 0;
     for (size_t ti = 0; ti < top_parts.size(); ++ti) {
         if (pi >= pat_parts.size()) return false;
-
-        if (pat_parts[pi] == "#") {
-            return true;  // # matches everything remaining
-        }
-        if (pat_parts[pi] == "+") {
-            ++pi;
-            continue;  // + matches exactly one level
-        }
-        if (pat_parts[pi] != top_parts[ti]) {
-            return false;
-        }
+        if (pat_parts[pi] == "#") return true;
+        if (pat_parts[pi] == "+") { ++pi; continue; }
+        if (pat_parts[pi] != top_parts[ti]) return false;
         ++pi;
     }
 
