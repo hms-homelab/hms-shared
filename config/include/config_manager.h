@@ -6,6 +6,9 @@
 #include <optional>
 #include <yaml-cpp/yaml.h>
 
+// MqttConfig is defined in mqtt/include/mqtt_config.h (standalone, no yaml dep)
+#include "mqtt_config.h"
+
 namespace hms {
 
 struct CameraConfig {
@@ -34,9 +37,6 @@ struct DetectionConfig {
     int max_detections = 10;
     bool gpu_enabled = false;
 };
-
-// MqttConfig is defined in mqtt/include/mqtt_config.h (standalone, no yaml dep)
-#include "mqtt_config.h"
 
 struct ApiConfig {
     std::string host = "0.0.0.0";
