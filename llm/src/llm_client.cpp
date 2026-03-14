@@ -233,7 +233,7 @@ std::optional<std::string> LLMClient::generateOpenAI(const std::string& prompt) 
         {"model", config_.model},
         {"messages", {{{"role", "user"}, {"content", prompt}}}},
         {"temperature", config_.temperature},
-        {"max_tokens", config_.max_tokens}
+        {"max_completion_tokens", config_.max_tokens}
     };
 
     struct curl_slist* headers = nullptr;

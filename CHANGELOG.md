@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.1 (2026-03-14)
+
+### Fixed
+- **OpenAI GPT-5+ compatibility**: Use `max_completion_tokens` instead of `max_tokens` in OpenAI
+  chat completions request (required by GPT-5.2 and newer models)
+
 ## v1.5.0 (2026-03-14)
 
 ### Changed
