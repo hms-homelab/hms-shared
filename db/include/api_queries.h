@@ -8,7 +8,7 @@
 #include "db_pool.h"
 #include "config_manager.h"
 
-namespace yolo {
+namespace hms {
 
 using json = nlohmann::json;
 
@@ -85,4 +85,4 @@ void insert_periodic_snapshot(DbPool& db,
                               bool is_valid);
 
 } // namespace api_queries
-} // namespace yolo
+} // namespace hms

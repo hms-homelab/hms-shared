@@ -6,7 +6,7 @@
 #include <optional>
 #include <yaml-cpp/yaml.h>
 
-namespace yolo {
+namespace hms {
 
 struct CameraConfig {
     std::string id;
@@ -117,4 +117,4 @@ private:
     static inline bool loaded_ = false;
 };
 
-} // namespace yolo
+} // namespace hms

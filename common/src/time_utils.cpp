@@ -4,7 +4,7 @@
 #include <ctime>
 #include <regex>
 
-namespace yolo::time_utils {
+namespace hms::time_utils {
 
 std::string to_iso8601(const TimePoint& tp) {
     auto time_t_val = Clock::to_time_t(tp);
@@ -121,4 +121,4 @@ std::string pg_timestamp_to_iso8601(const std::string& pg_ts) {
     return result;
 }
 
-} // namespace yolo::time_utils
+} // namespace hms::time_utils

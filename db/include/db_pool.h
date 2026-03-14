@@ -7,7 +7,7 @@
 #include <queue>
 #include <pqxx/pqxx>
 
-namespace yolo {
+namespace hms {
 
 /// Thread-safe PostgreSQL connection pool using libpqxx
 class DbPool {
@@ -73,4 +73,4 @@ private:
     int total_created_ = 0;
 };
 
-} // namespace yolo
+} // namespace hms

@@ -5,7 +5,7 @@
 #include <pqxx/pqxx>
 #include <sstream>
 
-namespace yolo::api_queries {
+namespace hms::api_queries {
 
 namespace {
 
@@ -649,4 +649,4 @@ void insert_periodic_snapshot(DbPool& db,
     }
 }
 
-} // namespace yolo::api_queries
+} // namespace hms::api_queries

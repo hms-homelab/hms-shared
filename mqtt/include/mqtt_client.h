@@ -11,7 +11,7 @@
 
 #include <mqtt/async_client.h>
 
-namespace yolo {
+namespace hms {
 
 /// Thread-safe Paho MQTT async_client wrapper with auto-reconnect.
 /// Pattern: fire-and-forget publish (no token->wait()), batch subscribe,
@@ -72,4 +72,4 @@ private:
     std::vector<PendingSub> pending_subs_;
 };
 
-}  // namespace yolo
+}  // namespace hms

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace yolo {
+namespace hms {
 
 /// Database event logging for detection events.
 /// Uses DbPool for thread-safe connections.
@@ -52,4 +52,4 @@ struct EventLogger {
                                const AiVisionRecord& record);
 };
 
-}  // namespace yolo
+}  // namespace hms

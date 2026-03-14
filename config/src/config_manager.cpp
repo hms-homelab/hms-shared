@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <fstream>
 
-namespace yolo {
+namespace hms {
 
 AppConfig ConfigManager::load(const std::string& config_path) {
     spdlog::info("Loading configuration from: {}", config_path);
@@ -189,4 +189,4 @@ AppConfig ConfigManager::parse(const YAML::Node& root) {
     return config;
 }
 
-} // namespace yolo
+} // namespace hms

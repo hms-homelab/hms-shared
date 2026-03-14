@@ -2,7 +2,7 @@
 #include <spdlog/spdlog.h>
 #include <sstream>
 
-namespace yolo {
+namespace hms {
 
 DbPool::DbPool(const Config& config) : pool_size_(config.pool_size) {
     std::ostringstream oss;
@@ -110,4 +110,4 @@ DbPool::ConnectionGuard::ConnectionGuard(ConnectionGuard&& other) noexcept
     other.pool_ = nullptr;
 }
 
-} // namespace yolo
+} // namespace hms

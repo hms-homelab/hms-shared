@@ -8,15 +8,15 @@
 
 TEST_CASE("get_cameras_status returns correct JSON structure", "[db][queries]") {
     // Create a mock camera config map
-    std::unordered_map<std::string, yolo::CameraConfig> cameras;
+    std::unordered_map<std::string, hms::CameraConfig> cameras;
 
-    yolo::CameraConfig cam1;
+    hms::CameraConfig cam1;
     cam1.id = "patio";
     cam1.name = "Patio";
     cam1.enabled = true;
     cameras["patio"] = cam1;
 
-    yolo::CameraConfig cam2;
+    hms::CameraConfig cam2;
     cam2.id = "front_door";
     cam2.name = "Front Door";
     cam2.enabled = false;  // disabled
@@ -116,7 +116,7 @@ TEST_CASE("JSON event detail structure with detections", "[db][queries]") {
 }
 
 TEST_CASE("AiVisionRecord has correct defaults", "[db][event_logger]") {
-    yolo::EventLogger::AiVisionRecord record;
+    hms::EventLogger::AiVisionRecord record;
 
     CHECK(record.context_text.empty());
     CHECK(record.detected_classes.empty());
@@ -127,7 +127,7 @@ TEST_CASE("AiVisionRecord has correct defaults", "[db][event_logger]") {
 }
 
 TEST_CASE("AiVisionRecord designated initializer fields", "[db][event_logger]") {
-    yolo::EventLogger::AiVisionRecord record{
+    hms::EventLogger::AiVisionRecord record{
         .context_text = "A person walking on the patio",
         .detected_classes = {"person", "dog"},
         .source_model = "llava:13b",
@@ -149,7 +149,7 @@ TEST_CASE("AiVisionRecord designated initializer fields", "[db][event_logger]") 
 // ────────────────────────────────────────────────────────────────────
 
 TEST_CASE("SearchParams has correct defaults", "[db][search]") {
-    yolo::api_queries::SearchParams params;
+    hms::api_queries::SearchParams params;
 
     CHECK(params.query.empty());
     CHECK(params.class_filter.empty());
@@ -161,7 +161,7 @@ TEST_CASE("SearchParams has correct defaults", "[db][search]") {
 }
 
 TEST_CASE("SearchParams accepts all fields", "[db][search]") {
-    yolo::api_queries::SearchParams params;
+    hms::api_queries::SearchParams params;
     params.query = "person walking on porch";
     params.class_filter = {"person", "dog"};
     params.camera_id = "patio";

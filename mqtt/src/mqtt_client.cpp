@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <sstream>
 
-namespace yolo {
+namespace hms {
 
 MqttClient::MqttClient(const MqttConfig& config)
     : config_(config)
@@ -196,4 +196,4 @@ bool MqttClient::topicMatches(const std::string& pattern, const std::string& top
     return pi == pat_parts.size();
 }
 
-}  // namespace yolo
+}  // namespace hms

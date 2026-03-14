@@ -4,7 +4,7 @@
 #include <pqxx/pqxx>
 #include <chrono>
 
-namespace yolo {
+namespace hms {
 
 void EventLogger::create_event(DbPool& db,
                                 const std::string& event_id,
@@ -132,4 +132,4 @@ void EventLogger::log_ai_context(DbPool& db,
     }
 }
 
-}  // namespace yolo
+}  // namespace hms

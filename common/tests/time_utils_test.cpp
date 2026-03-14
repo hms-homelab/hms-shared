@@ -2,7 +2,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "time_utils.h"
 
-using namespace yolo::time_utils;
+using namespace hms::time_utils;
 
 TEST_CASE("ISO 8601 round-trip", "[time]") {
     auto now = std::chrono::system_clock::now();

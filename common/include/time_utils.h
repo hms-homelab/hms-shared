@@ -4,7 +4,7 @@
 #include <chrono>
 #include <optional>
 
-namespace yolo {
+namespace hms {
 
 using Clock = std::chrono::system_clock;
 using TimePoint = Clock::time_point;
@@ -39,4 +39,4 @@ std::string to_date_string(const TimePoint& tp);
 std::string pg_timestamp_to_iso8601(const std::string& pg_ts);
 
 } // namespace time_utils
-} // namespace yolo
+} // namespace hms

@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.0 (2026-03-14)
+
+### Changed
+- **Namespace migration**: `yolo::` -> `hms::` across all modules (config, common, db, mqtt)
+  - `hms::ConfigManager`, `hms::MqttClient`, `hms::DbPool`, `hms::EventLogger`
+  - `hms::time_utils`, `hms::api_queries`
+  - Config struct defaults (model paths, topic prefixes, log paths) unchanged
+- All tests updated to use `hms::` namespace
+
 ## v1.4.0 (2026-03-14)
 
 ### Added

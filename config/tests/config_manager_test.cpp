@@ -41,7 +41,7 @@ cameras:
     enabled: false
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     REQUIRE(config.cameras.size() == 2);
 
@@ -71,7 +71,7 @@ cameras:
     name: "Test"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.buffer.preroll_seconds == 5);
     CHECK(config.buffer.fps == 15);
@@ -95,7 +95,7 @@ database:
   pool_size: 8
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.database.host == "10.0.0.1");
     CHECK(config.database.port == 5433);
@@ -120,7 +120,7 @@ timeline:
     - "http://localhost:3000"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.timeline.host == "127.0.0.1");
     CHECK(config.timeline.port == 9090);
@@ -140,8 +140,8 @@ cameras:
     name: "Test Camera"
 )");
 
-    yolo::ConfigManager::load(cfg.path);
-    const auto& config = yolo::ConfigManager::get();
+    hms::ConfigManager::load(cfg.path);
+    const auto& config = hms::ConfigManager::get();
 
     CHECK(config.cameras.count("test") == 1);
     CHECK(config.cameras.at("test").name == "Test Camera");
@@ -162,7 +162,7 @@ llava:
     front_door: "Front door sees a {class}."
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.llava.enabled == true);
     CHECK(config.llava.endpoint == "http://10.0.0.5:11434");
@@ -181,7 +181,7 @@ TEST_CASE("ConfigManager llava defaults when section missing", "[config]") {
 cameras: {}
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.llava.enabled == false);
     CHECK(config.llava.model == "llava:7b");
@@ -201,7 +201,7 @@ llava:
     side_window: "Side: {class}"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     REQUIRE(config.llava.prompts.size() == 3);
     CHECK(config.llava.prompts.count("default") == 1);
@@ -216,7 +216,7 @@ detection:
   gpu_enabled: true
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.detection.gpu_enabled == true);
 }
@@ -226,14 +226,14 @@ TEST_CASE("ConfigManager gpu_enabled defaults to false", "[config]") {
 cameras: {}
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.detection.gpu_enabled == false);
 }
 
 TEST_CASE("ConfigManager throws on invalid file", "[config]") {
     REQUIRE_THROWS_AS(
-        yolo::ConfigManager::load("/nonexistent/path.yaml"),
+        hms::ConfigManager::load("/nonexistent/path.yaml"),
         std::runtime_error
     );
 }
@@ -255,7 +255,7 @@ cameras:
     name: "Side Window"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.cameras.at("patio").periodic_snapshot_interval == 300);
     CHECK(config.cameras.at("front_door").periodic_snapshot_interval == 600);
@@ -270,7 +270,7 @@ cameras:
     name: "Test"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.cameras.at("test").periodic_snapshot_interval == 0);
 }
@@ -282,7 +282,7 @@ timeline:
   ollama_url: "http://10.0.0.5:11434"
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.timeline.ollama_url == "http://10.0.0.5:11434");
 }
@@ -292,7 +292,7 @@ TEST_CASE("ConfigManager ollama_url defaults to localhost", "[config]") {
 cameras: {}
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.timeline.ollama_url == "http://localhost:11434");
 }
@@ -309,7 +309,7 @@ timeline:
   port: 8080
 )");
 
-    auto config = yolo::ConfigManager::load(cfg.path);
+    auto config = hms::ConfigManager::load(cfg.path);
 
     CHECK(config.cameras.at("patio").periodic_snapshot_interval == 300);
     CHECK(config.timeline.ollama_url == "http://nvr:11434");
