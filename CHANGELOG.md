@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.4.0 (2026-03-14)
+
+### Added
+- **LLM module** (`llm/`): Multi-provider LLM client (`hms::LLMClient`) in `hms` namespace
+  - Ollama (`/api/generate`), OpenAI (`/v1/chat/completions`), Google Gemini (`/v1beta/models/:generateContent`), Anthropic Claude (`/v1/messages`)
+  - Configurable temperature, max_tokens, timeout
+  - Ollama model eviction via `keep_alive_seconds` (default 0 = unload from VRAM after call)
+  - Prompt template file loading and `{placeholder}` substitution
+- **`hms_llm` CMake target**: Standalone static library (nlohmann_json + curl only), no DB/MQTT/config deps. Consumers can link just `hms_llm` without pulling the full `hms_shared` target.
+- CMakeLists.txt bumped to v1.4.0, added `find_package(CURL)` dependency
+
 ## v1.3.0 (2026-03-11)
 
 ### Added
