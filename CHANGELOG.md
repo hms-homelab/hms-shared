@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.6.0 (2026-03-18)
+
+### Added
+- `generateWithTools()` — LLM function calling for all 4 providers (Ollama, OpenAI, Gemini, Anthropic)
+- `embed()` — text embedding generation (Ollama, OpenAI)
+- `toVectorLiteral()` — pgvector literal formatter
+- New structs: `ToolDefinition`, `ToolCall`, `ChatMessage`, `LLMToolResponse`
+- Internal `llm_tool_format.h` for testable serialization/parsing helpers
+- `llm_tests` Catch2 target (30 tests for tool serialization, response parsing, embeddings)
+
 ## v1.5.1 (2026-03-14)
 
 ### Fixed

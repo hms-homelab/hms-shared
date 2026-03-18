@@ -1,4 +1,5 @@
 #include "llm_client.h"
+#include "llm_tool_format.h"
 
 #include <algorithm>
 #include <chrono>
@@ -545,6 +546,178 @@ std::string LLMClient::base64Encode(const std::vector<unsigned char>& data) {
     return encoded;
 }
 
+// ─── generateWithTools (dispatch with timing and abort) ─────────────────────
+
+LLMToolResponse LLMClient::generateWithTools(
+    const std::vector<ChatMessage>& messages,
+    const std::vector<ToolDefinition>& tools,
+    const std::atomic<bool>* abort_flag) {
+
+    LLMToolResponse result;
+    auto start = std::chrono::steady_clock::now();
+
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        return result;
+    }
+
+    nlohmann::json req;
+    std::string url;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    switch (config_.provider) {
+        case LLMProvider::OLLAMA: {
+            url = config_.endpoint + "/api/chat";
+            req["model"] = config_.model;
+            req["stream"] = false;
+            req["messages"] = tool_format::buildOllamaMessages(messages);
+            req["tools"] = tool_format::buildOllamaTools(tools);
+            req["options"] = {{"temperature", config_.temperature}};
+            req["keep_alive"] = config_.keep_alive_seconds;
+            break;
+        }
+        case LLMProvider::OPENAI: {
+            url = config_.endpoint + "/v1/chat/completions";
+            req["model"] = config_.model;
+            req["messages"] = tool_format::buildOpenAIMessages(messages);
+            req["tools"] = tool_format::buildOpenAITools(tools);
+            req["temperature"] = config_.temperature;
+            req["max_completion_tokens"] = config_.max_tokens;
+            std::string auth = "Authorization: Bearer " + config_.api_key;
+            headers = curl_slist_append(headers, auth.c_str());
+            break;
+        }
+        case LLMProvider::ANTHROPIC: {
+            url = config_.endpoint + "/v1/messages";
+            auto am = tool_format::buildAnthropicMessages(messages);
+            req["model"] = config_.model;
+            req["max_tokens"] = config_.max_tokens;
+            req["messages"] = am.messages;
+            req["tools"] = tool_format::buildAnthropicTools(tools);
+            if (!am.system_prompt.empty()) {
+                req["system"] = am.system_prompt;
+            }
+            std::string api_header = "x-api-key: " + config_.api_key;
+            headers = curl_slist_append(headers, api_header.c_str());
+            headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
+            break;
+        }
+        case LLMProvider::GEMINI: {
+            url = config_.endpoint + "/v1beta/models/" + config_.model +
+                  ":generateContent?key=" + config_.api_key;
+            req["contents"] = tool_format::buildGeminiMessages(messages);
+            req["tools"] = tool_format::buildGeminiTools(tools);
+            req["generationConfig"] = {
+                {"temperature", config_.temperature},
+                {"maxOutputTokens", config_.max_tokens}
+            };
+            break;
+        }
+    }
+
+    std::string body = req.dump();
+    auto response = httpPost(url, body, headers, abort_flag);
+    curl_slist_free_all(headers);
+
+    auto end = std::chrono::steady_clock::now();
+    result.elapsed_seconds = std::chrono::duration<double>(end - start).count();
+
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        return result;
+    }
+
+    if (!response) return result;
+
+    try {
+        auto j = nlohmann::json::parse(response.value());
+        switch (config_.provider) {
+            case LLMProvider::OLLAMA:    result = tool_format::parseOllamaToolResponse(j); break;
+            case LLMProvider::OPENAI:    result = tool_format::parseOpenAIToolResponse(j); break;
+            case LLMProvider::ANTHROPIC: result = tool_format::parseAnthropicToolResponse(j); break;
+            case LLMProvider::GEMINI:    result = tool_format::parseGeminiToolResponse(j); break;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "LLM: Failed to parse tool response from "
+                  << providerName(config_.provider) << ": " << e.what() << std::endl;
+    }
+
+    // Restore timing (parsing functions don't set it)
+    result.elapsed_seconds = std::chrono::duration<double>(end - start).count();
+    return result;
+}
+
+// ─── embed ──────────────────────────────────────────────────────────────────
+
+std::vector<float> LLMClient::embed(const std::string& text) {
+    return embed(text, config_.model);
+}
+
+std::vector<float> LLMClient::embed(const std::string& text, const std::string& model) {
+    nlohmann::json req;
+    std::string url;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    switch (config_.provider) {
+        case LLMProvider::OLLAMA: {
+            url = config_.endpoint + "/api/embeddings";
+            req["model"] = model;
+            req["prompt"] = text;
+            break;
+        }
+        case LLMProvider::OPENAI: {
+            url = config_.endpoint + "/v1/embeddings";
+            req["model"] = model;
+            req["input"] = text;
+            std::string auth = "Authorization: Bearer " + config_.api_key;
+            headers = curl_slist_append(headers, auth.c_str());
+            break;
+        }
+        case LLMProvider::ANTHROPIC:
+        case LLMProvider::GEMINI:
+            curl_slist_free_all(headers);
+            throw std::runtime_error(
+                "LLM: embed() not supported for " + providerName(config_.provider) +
+                ". Use a separate Ollama or OpenAI-backed LLMClient for embeddings.");
+    }
+
+    std::string body = req.dump();
+    auto response = httpPost(url, body, headers);
+    curl_slist_free_all(headers);
+
+    if (!response) {
+        throw std::runtime_error("LLM: embed() HTTP request failed");
+    }
+
+    try {
+        auto j = nlohmann::json::parse(response.value());
+        switch (config_.provider) {
+            case LLMProvider::OLLAMA:  return tool_format::parseOllamaEmbedding(j);
+            case LLMProvider::OPENAI:  return tool_format::parseOpenAIEmbedding(j);
+            default: break;
+        }
+    } catch (const nlohmann::json::exception& e) {
+        throw std::runtime_error(std::string("LLM: embed() parse error: ") + e.what());
+    }
+
+    return {};
+}
+
+// ─── toVectorLiteral ────────────────────────────────────────────────────────
+
+std::string LLMClient::toVectorLiteral(const std::vector<float>& vec) {
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << vec[i];
+    }
+    oss << "]";
+    return oss.str();
+}
+
 // ─── Force Unload Model ─────────────────────────────────────────────────────
 
 void LLMClient::forceUnloadModel(const std::string& ollama_endpoint,
@@ -587,3 +760,317 @@ void LLMClient::forceUnloadModel(const std::string& ollama_endpoint,
 }
 
 } // namespace hms
+
+// ═══════════════════════════════════════════════════════════════════════════
+// tool_format — serialization and parsing helpers (testable via llm_tool_format.h)
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace hms::tool_format {
+
+using json = nlohmann::json;
+
+// ─── Tool serialization ────────────────────────────────────────────────────
+
+json buildOllamaTools(const std::vector<ToolDefinition>& tools) {
+    json arr = json::array();
+    for (const auto& t : tools) {
+        arr.push_back({
+            {"type", "function"},
+            {"function", {
+                {"name", t.name},
+                {"description", t.description},
+                {"parameters", t.parameters}
+            }}
+        });
+    }
+    return arr;
+}
+
+json buildOpenAITools(const std::vector<ToolDefinition>& tools) {
+    // Same format as Ollama (OpenAI-compatible)
+    return buildOllamaTools(tools);
+}
+
+json buildAnthropicTools(const std::vector<ToolDefinition>& tools) {
+    json arr = json::array();
+    for (const auto& t : tools) {
+        arr.push_back({
+            {"name", t.name},
+            {"description", t.description},
+            {"input_schema", t.parameters}
+        });
+    }
+    return arr;
+}
+
+json buildGeminiTools(const std::vector<ToolDefinition>& tools) {
+    json decls = json::array();
+    for (const auto& t : tools) {
+        decls.push_back({
+            {"name", t.name},
+            {"description", t.description},
+            {"parameters", t.parameters}
+        });
+    }
+    return json::array({{{"functionDeclarations", decls}}});
+}
+
+// ─── Message serialization ─────────────────────────────────────────────────
+
+static json serializeToolCalls_OpenAI(const std::vector<ToolCall>& calls) {
+    json arr = json::array();
+    for (const auto& tc : calls) {
+        arr.push_back({
+            {"id", tc.id},
+            {"type", "function"},
+            {"function", {
+                {"name", tc.name},
+                {"arguments", tc.arguments.dump()}
+            }}
+        });
+    }
+    return arr;
+}
+
+json buildOllamaMessages(const std::vector<ChatMessage>& messages) {
+    json arr = json::array();
+    for (const auto& m : messages) {
+        json msg = {{"role", m.role}, {"content", m.content}};
+        if (!m.tool_calls.empty()) {
+            msg["tool_calls"] = serializeToolCalls_OpenAI(m.tool_calls);
+        }
+        arr.push_back(msg);
+    }
+    return arr;
+}
+
+json buildOpenAIMessages(const std::vector<ChatMessage>& messages) {
+    json arr = json::array();
+    for (const auto& m : messages) {
+        json msg = {{"role", m.role}, {"content", m.content}};
+        if (!m.tool_calls.empty()) {
+            msg["tool_calls"] = serializeToolCalls_OpenAI(m.tool_calls);
+        }
+        if (!m.tool_call_id.empty()) {
+            msg["tool_call_id"] = m.tool_call_id;
+        }
+        arr.push_back(msg);
+    }
+    return arr;
+}
+
+AnthropicMessageResult buildAnthropicMessages(const std::vector<ChatMessage>& messages) {
+    AnthropicMessageResult result;
+    result.messages = json::array();
+
+    for (const auto& m : messages) {
+        if (m.role == "system") {
+            result.system_prompt = m.content;
+            continue;
+        }
+
+        if (m.role == "assistant" && !m.tool_calls.empty()) {
+            json content = json::array();
+            if (!m.content.empty()) {
+                content.push_back({{"type", "text"}, {"text", m.content}});
+            }
+            for (const auto& tc : m.tool_calls) {
+                content.push_back({
+                    {"type", "tool_use"},
+                    {"id", tc.id},
+                    {"name", tc.name},
+                    {"input", tc.arguments}
+                });
+            }
+            result.messages.push_back({{"role", "assistant"}, {"content", content}});
+        } else if (m.role == "tool") {
+            // Anthropic: tool results go as user messages with content blocks
+            json content = json::array();
+            content.push_back({
+                {"type", "tool_result"},
+                {"tool_use_id", m.tool_call_id},
+                {"content", m.content}
+            });
+            result.messages.push_back({{"role", "user"}, {"content", content}});
+        } else {
+            result.messages.push_back({{"role", m.role}, {"content", m.content}});
+        }
+    }
+    return result;
+}
+
+json buildGeminiMessages(const std::vector<ChatMessage>& messages) {
+    json arr = json::array();
+    for (const auto& m : messages) {
+        if (m.role == "system") continue;  // Gemini uses systemInstruction, handled separately
+
+        std::string role = (m.role == "assistant") ? "model" : m.role;
+
+        if (m.role == "tool") {
+            // Gemini: tool results are function role with functionResponse parts
+            json parts = json::array();
+            json response_content;
+            try {
+                response_content = json::parse(m.content);
+            } catch (...) {
+                response_content = {{"result", m.content}};
+            }
+            parts.push_back({
+                {"functionResponse", {
+                    {"name", m.tool_call_id},  // tool_call_id stores function name for Gemini
+                    {"response", response_content}
+                }}
+            });
+            arr.push_back({{"role", "function"}, {"parts", parts}});
+        } else if (m.role == "assistant" && !m.tool_calls.empty()) {
+            json parts = json::array();
+            if (!m.content.empty()) {
+                parts.push_back({{"text", m.content}});
+            }
+            for (const auto& tc : m.tool_calls) {
+                parts.push_back({
+                    {"functionCall", {
+                        {"name", tc.name},
+                        {"args", tc.arguments}
+                    }}
+                });
+            }
+            arr.push_back({{"role", "model"}, {"parts", parts}});
+        } else {
+            arr.push_back({
+                {"role", role},
+                {"parts", json::array({{{"text", m.content}}})}
+            });
+        }
+    }
+    return arr;
+}
+
+// ─── Response parsing ──────────────────────────────────────────────────────
+
+LLMToolResponse parseOllamaToolResponse(const json& j) {
+    LLMToolResponse result;
+
+    if (j.contains("message")) {
+        const auto& msg = j["message"];
+        if (msg.contains("content") && !msg["content"].get<std::string>().empty()) {
+            result.text = msg["content"].get<std::string>();
+        }
+        if (msg.contains("tool_calls")) {
+            for (const auto& tc : msg["tool_calls"]) {
+                ToolCall call;
+                call.name = tc["function"]["name"].get<std::string>();
+                call.arguments = tc["function"]["arguments"];
+                if (tc.contains("id")) {
+                    call.id = tc["id"].get<std::string>();
+                }
+                result.tool_calls.push_back(std::move(call));
+            }
+        }
+    }
+    result.stop_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
+    return result;
+}
+
+LLMToolResponse parseOpenAIToolResponse(const json& j) {
+    LLMToolResponse result;
+
+    if (j.contains("choices") && !j["choices"].empty()) {
+        const auto& choice = j["choices"][0];
+        if (choice.contains("finish_reason")) {
+            result.stop_reason = choice["finish_reason"].get<std::string>();
+        }
+        if (choice.contains("message")) {
+            const auto& msg = choice["message"];
+            if (msg.contains("content") && !msg["content"].is_null()) {
+                result.text = msg["content"].get<std::string>();
+            }
+            if (msg.contains("tool_calls")) {
+                for (const auto& tc : msg["tool_calls"]) {
+                    ToolCall call;
+                    call.id = tc["id"].get<std::string>();
+                    call.name = tc["function"]["name"].get<std::string>();
+                    // OpenAI returns arguments as a string
+                    std::string args_str = tc["function"]["arguments"].get<std::string>();
+                    call.arguments = json::parse(args_str);
+                    result.tool_calls.push_back(std::move(call));
+                }
+            }
+        }
+    }
+    return result;
+}
+
+LLMToolResponse parseAnthropicToolResponse(const json& j) {
+    LLMToolResponse result;
+
+    if (j.contains("stop_reason")) {
+        result.stop_reason = j["stop_reason"].get<std::string>();
+    }
+    if (j.contains("content")) {
+        for (const auto& block : j["content"]) {
+            if (block["type"] == "text") {
+                result.text = block["text"].get<std::string>();
+            } else if (block["type"] == "tool_use") {
+                ToolCall call;
+                call.id = block["id"].get<std::string>();
+                call.name = block["name"].get<std::string>();
+                call.arguments = block["input"];
+                result.tool_calls.push_back(std::move(call));
+            }
+        }
+    }
+    return result;
+}
+
+LLMToolResponse parseGeminiToolResponse(const json& j) {
+    LLMToolResponse result;
+
+    if (j.contains("candidates") && !j["candidates"].empty()) {
+        const auto& candidate = j["candidates"][0];
+        if (candidate.contains("finishReason")) {
+            result.stop_reason = candidate["finishReason"].get<std::string>();
+        }
+        if (candidate.contains("content") && candidate["content"].contains("parts")) {
+            for (const auto& part : candidate["content"]["parts"]) {
+                if (part.contains("text")) {
+                    result.text = part["text"].get<std::string>();
+                } else if (part.contains("functionCall")) {
+                    ToolCall call;
+                    call.name = part["functionCall"]["name"].get<std::string>();
+                    call.arguments = part["functionCall"]["args"];
+                    result.tool_calls.push_back(std::move(call));
+                }
+            }
+        }
+    }
+    return result;
+}
+
+// ─── Embedding response parsing ────────────────────────────────────────────
+
+std::vector<float> parseOllamaEmbedding(const json& j) {
+    std::vector<float> result;
+    if (j.contains("embedding")) {
+        const auto& emb = j["embedding"];
+        result.reserve(emb.size());
+        for (const auto& v : emb) {
+            result.push_back(v.get<float>());
+        }
+    }
+    return result;
+}
+
+std::vector<float> parseOpenAIEmbedding(const json& j) {
+    std::vector<float> result;
+    if (j.contains("data") && !j["data"].empty()) {
+        const auto& emb = j["data"][0]["embedding"];
+        result.reserve(emb.size());
+        for (const auto& v : emb) {
+            result.push_back(v.get<float>());
+        }
+    }
+    return result;
+}
+
+} // namespace hms::tool_format

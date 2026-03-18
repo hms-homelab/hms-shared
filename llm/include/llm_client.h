@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 namespace hms {
 
@@ -53,6 +54,45 @@ struct LLMResponse {
 };
 
 /**
+ * Tool definition for function calling
+ */
+struct ToolDefinition {
+    std::string name;
+    std::string description;
+    nlohmann::json parameters;  // JSON Schema
+};
+
+/**
+ * A tool call returned by the model
+ */
+struct ToolCall {
+    std::string id;               // provider-assigned ID (for matching results)
+    std::string name;
+    nlohmann::json arguments;
+};
+
+/**
+ * Multi-turn chat message (supports tool-use conversations)
+ */
+struct ChatMessage {
+    std::string role;             // "system", "user", "assistant", "tool"
+    std::string content;
+    std::vector<ToolCall> tool_calls;   // when role=="assistant"
+    std::string tool_call_id;           // when role=="tool"
+};
+
+/**
+ * Response from generateWithTools()
+ */
+struct LLMToolResponse {
+    std::optional<std::string> text;
+    std::vector<ToolCall> tool_calls;
+    bool was_aborted = false;
+    double elapsed_seconds = 0;
+    std::string stop_reason;      // "end_turn", "tool_use", "stop", etc.
+};
+
+/**
  * LLMClient - Multi-provider LLM client for HMS services
  *
  * Supports Ollama, OpenAI/ChatGPT, Google Gemini, and Anthropic Claude.
@@ -94,6 +134,32 @@ public:
     LLMResponse generateVision(const std::string& prompt,
                                 const std::vector<LLMImage>& images,
                                 const std::atomic<bool>* abort_flag = nullptr);
+
+    /**
+     * Tool-use: multi-turn conversation with function calling
+     *
+     * Supports all 4 providers. Returns tool_calls when the model wants to
+     * invoke functions, or text when the model produces a final answer.
+     */
+    LLMToolResponse generateWithTools(
+        const std::vector<ChatMessage>& messages,
+        const std::vector<ToolDefinition>& tools,
+        const std::atomic<bool>* abort_flag = nullptr);
+
+    /**
+     * Generate text embeddings (Ollama, OpenAI only)
+     *
+     * @param text Text to embed
+     * @return Vector of floats (dimension depends on model)
+     * @throws std::runtime_error on failure or unsupported provider
+     */
+    std::vector<float> embed(const std::string& text);
+    std::vector<float> embed(const std::string& text, const std::string& model);
+
+    /**
+     * Format a float vector as a pgvector literal: [0.1,0.2,0.3]
+     */
+    static std::string toVectorLiteral(const std::vector<float>& vec);
 
     /**
      * Base64-encode binary data (e.g. JPEG image bytes)

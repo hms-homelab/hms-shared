@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(hms_shared VERSION 1.5.0 LANGUAGES CXX)
+project(hms_shared VERSION 1.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,7 +88,17 @@ if(HMS_SHARED_BUILD_TESTS)
     enable_testing()
 
     if(NOT TARGET Catch2::Catch2WithMain)
-        find_package(Catch2 3 CONFIG REQUIRED)
+        find_package(Catch2 3 CONFIG QUIET)
+        if(NOT Catch2_FOUND)
+            include(FetchContent)
+            FetchContent_Declare(
+                Catch2
+                GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+                GIT_TAG v3.5.2
+            )
+            FetchContent_MakeAvailable(Catch2)
+            list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+        endif()
     endif()
 
     include(CTest)
@@ -106,4 +116,23 @@ if(HMS_SHARED_BUILD_TESTS)
     )
 
     catch_discover_tests(shared_tests)
+
+    # LLM-specific tests (only need hms_llm, no DB/MQTT deps)
+    add_executable(llm_tests
+        llm/tests/llm_client_test.cpp
+        llm/src/llm_client.cpp
+    )
+
+    target_include_directories(llm_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/llm/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/llm/src
+    )
+
+    target_link_libraries(llm_tests PRIVATE
+        nlohmann_json::nlohmann_json
+        CURL::libcurl
+        Catch2::Catch2WithMain
+    )
+
+    catch_discover_tests(llm_tests)
 endif()
