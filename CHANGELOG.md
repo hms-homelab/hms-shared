@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.6.0 (2026-03-18)
+## v1.6.5 (2026-03-18)
 
 ### Added
 - `generateWithTools()` — LLM function calling for all 4 providers (Ollama, OpenAI, Gemini, Anthropic)
