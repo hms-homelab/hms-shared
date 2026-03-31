@@ -3,7 +3,11 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <sstream>
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace hms {
 
@@ -13,8 +17,13 @@ MqttClient::MqttClient(const MqttConfig& config)
     std::string broker_uri = "tcp://" + config_.broker + ":" + std::to_string(config_.port);
 
     // Client ID: use configured value or auto-generate from PID
+#ifdef _WIN32
+    auto pid = _getpid();
+#else
+    auto pid = ::getpid();
+#endif
     std::string cid = config_.client_id.empty()
-        ? ("hms_" + std::to_string(::getpid()))
+        ? ("hms_" + std::to_string(pid))
         : config_.client_id;
 
     client_ = std::make_unique<mqtt::async_client>(broker_uri, cid);
