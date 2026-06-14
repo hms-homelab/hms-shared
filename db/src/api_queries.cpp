@@ -118,8 +118,8 @@ json get_event_detail(DbPool& db, const std::string& event_id) {
         auto conn = db.acquire();
         pqxx::nontransaction txn(*conn);
 
-        // libpqxx 7.x: use pqxx::params for parameterized queries
-        auto event_result = txn.exec(R"(
+        // Parameterized via exec_params (portable across libpqxx 7.8 / 7.10)
+        auto event_result = txn.exec_params(R"(
             SELECT
                 de.event_id,
                 de.camera_id,
@@ -135,7 +135,7 @@ json get_event_detail(DbPool& db, const std::string& event_id) {
             FROM detection_events de
             LEFT JOIN ai_vision_context avc ON de.event_id = avc.event_id
             WHERE de.event_id = $1
-        )", pqxx::params{event_id});
+        )", event_id);
 
         if (event_result.empty()) return nullptr;
 
@@ -153,7 +153,7 @@ json get_event_detail(DbPool& db, const std::string& event_id) {
         event["snapshot_url"]     = field_or_null(row, 9);
         event["ai_context"]       = field_or_null(row, 10);
 
-        auto det_result = txn.exec(R"(
+        auto det_result = txn.exec_params(R"(
             SELECT
                 id as detection_id,
                 class_name,
@@ -164,11 +164,11 @@ json get_event_detail(DbPool& db, const std::string& event_id) {
             FROM detections
             WHERE event_id = $1
             ORDER BY frame_number, confidence DESC
-        )", pqxx::params{event_id});
+        )", event_id);
 
         json detections = json::array();
         for (const auto& det : det_result) {
-            detections.push_back({
+            detections.push_back(json{
                 {"detection_id",  field_as_int_or_null(det, 0)},
                 {"class_name",    field_or_null(det, 1)},
                 {"confidence",    field_as_double_or_null(det, 2)},
@@ -197,7 +197,7 @@ json get_timeline_data(
     auto make_empty_timeline = [&](const std::string& d) {
         json hours = json::array();
         for (int h = 0; h < 24; ++h)
-            hours.push_back({{"hour", h}, {"event_count", 0}, {"total_detections", 0}});
+            hours.push_back(json{{"hour", h}, {"event_count", 0}, {"total_detections", 0}});
         return json{{"camera_id", camera_id}, {"date", d}, {"hours", hours}};
     };
 
@@ -216,7 +216,7 @@ json get_timeline_data(
         auto conn = db.acquire();
         pqxx::nontransaction txn(*conn);
 
-        auto result = txn.exec(R"(
+        auto result = txn.exec_params(R"(
             SELECT
                 EXTRACT(HOUR FROM started_at) as hour,
                 COUNT(*) as event_count,
@@ -228,7 +228,7 @@ json get_timeline_data(
               AND status = 'completed'
             GROUP BY EXTRACT(HOUR FROM started_at)
             ORDER BY hour
-        )", pqxx::params{camera_id, start_str, end_str});
+        )", camera_id, start_str, end_str);
 
         std::unordered_map<int, std::pair<int,int>> hour_data;
         for (const auto& row : result) {
@@ -240,10 +240,10 @@ json get_timeline_data(
         for (int h = 0; h < 24; ++h) {
             auto it = hour_data.find(h);
             if (it != hour_data.end())
-                hours.push_back({{"hour",h},{"event_count",it->second.first},
+                hours.push_back(json{{"hour",h},{"event_count",it->second.first},
                                              {"total_detections",it->second.second}});
             else
-                hours.push_back({{"hour",h},{"event_count",0},{"total_detections",0}});
+                hours.push_back(json{{"hour",h},{"event_count",0},{"total_detections",0}});
         }
 
         return {{"camera_id", camera_id}, {"date", time_utils::to_iso8601(start)}, {"hours", hours}};
@@ -262,11 +262,11 @@ std::optional<std::string> get_camera_last_event(
         auto conn = db.acquire();
         pqxx::nontransaction txn(*conn);
 
-        auto result = txn.exec(R"(
+        auto result = txn.exec_params(R"(
             SELECT MAX(started_at)
             FROM detection_events
             WHERE camera_id = $1
-        )", pqxx::params{camera_id});
+        )", camera_id);
 
         if (result.empty() || result[0][0].is_null()) return std::nullopt;
         return time_utils::pg_timestamp_to_iso8601(result[0][0].c_str());
@@ -563,18 +563,18 @@ json get_periodic_snapshots(DbPool& db, const std::string& camera_id,
         auto conn = db.acquire();
         pqxx::nontransaction txn(*conn);
 
-        auto result = txn.exec(R"(
+        auto result = txn.exec_params(R"(
             SELECT id, camera_id, captured_at, snapshot_filename,
                    thumbnail_filename, context_text, is_valid
             FROM periodic_snapshots
             WHERE camera_id = $1 AND captured_at >= $2 AND captured_at < $3
               AND is_valid = true
             ORDER BY captured_at DESC
-        )", pqxx::params{camera_id, start_str, end_str});
+        )", camera_id, start_str, end_str);
 
         json snapshots = json::array();
         for (const auto& row : result) {
-            snapshots.push_back({
+            snapshots.push_back(json{
                 {"type", "snapshot"},
                 {"snapshot_id", row[0].as<int>()},
                 {"camera_id", row[1].c_str()},
@@ -620,25 +620,21 @@ void insert_periodic_snapshot(DbPool& db,
         }
 
         if (!vec_literal.empty()) {
-            txn.exec(R"(
+            txn.exec_params(R"(
                 INSERT INTO periodic_snapshots
                     (camera_id, captured_at, snapshot_filename, thumbnail_filename,
                      context_text, context_embedding, source_model, is_valid)
                 VALUES ($1, NOW(), $2, $3, $4, $5::vector, $6, $7)
-            )", pqxx::params{
-                camera_id, snapshot_filename, thumbnail_filename,
-                context_text, vec_literal, source_model, is_valid
-            });
+            )", camera_id, snapshot_filename, thumbnail_filename,
+                context_text, vec_literal, source_model, is_valid);
         } else {
-            txn.exec(R"(
+            txn.exec_params(R"(
                 INSERT INTO periodic_snapshots
                     (camera_id, captured_at, snapshot_filename, thumbnail_filename,
                      context_text, source_model, is_valid)
                 VALUES ($1, NOW(), $2, $3, $4, $5, $6)
-            )", pqxx::params{
-                camera_id, snapshot_filename, thumbnail_filename,
-                context_text, source_model, is_valid
-            });
+            )", camera_id, snapshot_filename, thumbnail_filename,
+                context_text, source_model, is_valid);
         }
 
         txn.commit();
