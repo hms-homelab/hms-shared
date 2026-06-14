@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(hms_shared VERSION 1.6.5 LANGUAGES CXX)
+project(hms_shared VERSION 1.6.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,17 +18,33 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
     find_package(nlohmann_json CONFIG REQUIRED)
 endif()
 
-if(NOT TARGET PkgConfig::pqxx)
+# libpqxx: pkg-config on Linux/macOS, vcpkg CONFIG package on Windows (no pkg-config).
+if(TARGET libpqxx::pqxx)
+    set(HMS_PQXX_TARGET libpqxx::pqxx)
+elseif(TARGET PkgConfig::pqxx)
+    set(HMS_PQXX_TARGET PkgConfig::pqxx)
+elseif(MSVC)
+    find_package(libpqxx CONFIG REQUIRED)
+    set(HMS_PQXX_TARGET libpqxx::pqxx)
+else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(pqxx REQUIRED IMPORTED_TARGET libpqxx)
+    set(HMS_PQXX_TARGET PkgConfig::pqxx)
 endif()
 
-if(NOT TARGET eclipse-paho-mqtt-c::paho-mqtt3as)
-    find_package(eclipse-paho-mqtt-c REQUIRED)
+# Paho MQTT (C + C++). Static vcpkg triplets expose -static suffixed targets.
+if(NOT TARGET eclipse-paho-mqtt-c::paho-mqtt3as AND NOT TARGET eclipse-paho-mqtt-c::paho-mqtt3as-static)
+    find_package(eclipse-paho-mqtt-c CONFIG REQUIRED)
 endif()
-
-if(NOT TARGET PahoMqttCpp::paho-mqttpp3)
-    find_package(PahoMqttCpp REQUIRED)
+if(NOT TARGET PahoMqttCpp::paho-mqttpp3 AND NOT TARGET PahoMqttCpp::paho-mqttpp3-static)
+    find_package(PahoMqttCpp CONFIG REQUIRED)
+endif()
+if(MSVC AND VCPKG_TARGET_TRIPLET MATCHES "static")
+    set(HMS_PAHO_C_TARGET   eclipse-paho-mqtt-c::paho-mqtt3as-static)
+    set(HMS_PAHO_CPP_TARGET PahoMqttCpp::paho-mqttpp3-static)
+else()
+    set(HMS_PAHO_C_TARGET   eclipse-paho-mqtt-c::paho-mqtt3as)
+    set(HMS_PAHO_CPP_TARGET PahoMqttCpp::paho-mqttpp3)
 endif()
 
 find_package(CURL REQUIRED)
@@ -57,9 +73,9 @@ target_link_libraries(hms_shared PUBLIC
     spdlog::spdlog
     yaml-cpp::yaml-cpp
     nlohmann_json::nlohmann_json
-    PkgConfig::pqxx
-    eclipse-paho-mqtt-c::paho-mqtt3as
-    PahoMqttCpp::paho-mqttpp3
+    ${HMS_PQXX_TARGET}
+    ${HMS_PAHO_C_TARGET}
+    ${HMS_PAHO_CPP_TARGET}
     CURL::libcurl
 )
 

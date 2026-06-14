@@ -1,0 +1,15 @@
+{
+  "name": "hms-shared",
+  "version-string": "1.6.7",
+  "description": "Shared C++ modules (config, db, mqtt, llm) for the HMS homelab services",
+  "dependencies": [
+    "curl",
+    "nlohmann-json",
+    "spdlog",
+    "yaml-cpp",
+    "paho-mqtt",
+    "paho-mqttpp3",
+    "libpqxx",
+    "catch2"
+  ]
+}

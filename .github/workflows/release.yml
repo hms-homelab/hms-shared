@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.6.7)'
+        required: true
+        default: 'v1.6.7'
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Linux artifact ─────────────────────────────────────────────────────────
+  linux:
+    name: Build linux-amd64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config \
+            libspdlog-dev libyaml-cpp-dev nlohmann-json3-dev \
+            libpqxx-dev libpq-dev \
+            libpaho-mqtt-dev libpaho-mqttpp-dev \
+            libcurl4-openssl-dev libssl-dev catch2
+
+      - name: Build & test
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHMS_SHARED_BUILD_TESTS=ON
+          cmake --build build -j$(nproc)
+          cd build && ctest --output-on-failure
+
+      # Note: C++ static-lib binaries are ABI-sensitive (compiler/stdlib must
+      # match the consumer). These artifacts are a convenience; the supported
+      # path is CMake FetchContent against the pinned tag.
+      - name: Package
+        run: |
+          mkdir -p dist/lib dist/include
+          cp build/libhms_shared.a build/libhms_llm.a dist/lib/ 2>/dev/null || cp build/libhms_shared.a dist/lib/
+          for m in common config db llm mqtt; do
+            [ -d "$m/include" ] && cp -r "$m/include/." dist/include/ || true
+          done
+          for f in LICENSE README.md CHANGELOG.md; do [ -f "$f" ] && cp "$f" dist/ || true; done
+          tar -czf hms-shared-linux-amd64.tar.gz -C dist .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hms-shared-linux-amd64
+          path: hms-shared-linux-amd64.tar.gz
+
+  # ── Windows artifact (vcpkg, mirrors hms-cpap) ─────────────────────────────
+  windows:
+    name: Build windows-x64
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pin CMake 3.31
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: 3.31.7
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-win-x64-static-md-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-win-x64-static-md-
+
+      - name: Install vcpkg dependencies
+        run: vcpkg install --triplet x64-windows-static-md
+
+      - name: Build & test (MSVC)
+        run: |
+          mkdir build
+          cd build
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DHMS_SHARED_BUILD_TESTS=ON ..
+          cmake --build . --parallel
+          ctest --output-on-failure
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\lib, dist\include | Out-Null
+          Get-ChildItem -Path build -Recurse -Include hms_shared.lib, hms_llm.lib | Copy-Item -Destination dist\lib\
+          foreach ($m in 'common','config','db','llm','mqtt') {
+            if (Test-Path "$m\include") { Copy-Item -Recurse "$m\include\*" dist\include\ }
+          }
+          foreach ($f in 'LICENSE','README.md','CHANGELOG.md') { if (Test-Path $f) { Copy-Item $f dist\ } }
+          Compress-Archive -Path dist\* -DestinationPath hms-shared-windows-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hms-shared-windows-x64
+          path: hms-shared-windows-x64.zip
+
+  # ── Publish GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [linux, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: release/*
+          generate_release_notes: true
