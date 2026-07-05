@@ -9,22 +9,25 @@ namespace hms::api_queries {
 
 namespace {
 
-json field_or_null(const pqxx::row& row, int col) {
+// Templated on the row type so they accept both `pqxx::row` (libpqxx 7) and
+// `pqxx::row_ref` (libpqxx 8, where result iteration yields a ref). Behavior is
+// identical on both; this only widens the accepted type.
+template <class Row> json field_or_null(const Row& row, int col) {
     if (row[col].is_null()) return nullptr;
     return row[col].c_str();
 }
 
-json field_as_double_or_null(const pqxx::row& row, int col) {
+template <class Row> json field_as_double_or_null(const Row& row, int col) {
     if (row[col].is_null()) return nullptr;
-    return row[col].as<double>();
+    return row[col].template as<double>();
 }
 
-json field_as_int_or_null(const pqxx::row& row, int col) {
+template <class Row> json field_as_int_or_null(const Row& row, int col) {
     if (row[col].is_null()) return nullptr;
-    return row[col].as<int>();
+    return row[col].template as<int>();
 }
 
-json timestamp_or_null(const pqxx::row& row, int col) {
+template <class Row> json timestamp_or_null(const Row& row, int col) {
     if (row[col].is_null()) return nullptr;
     return time_utils::pg_timestamp_to_iso8601(row[col].c_str());
 }
