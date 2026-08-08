@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.6.9 (2026-08-08)
+
+### Fixed
+- **DbPool connection-slot leak**: `DbPool::acquire()` permanently leaked a pool
+  slot when a connection failed its `SELECT 1` liveness check *and* the
+  subsequent `create_connection()` reconnect also threw (e.g. Postgres briefly
+  unreachable). The popped connection was not yet wrapped in a `ConnectionGuard`,
+  so the `throw;` destroyed it without returning it to the pool. With a small
+  `pool_size`, a single DB outage could leak every slot, after which all
+  `acquire()` calls failed with "DB pool exhausted — no connection available
+  after 10s" until the process was restarted. The slot is now returned to the
+  pool before rethrowing, making the pool self-healing across transient outages.
+
 ## v1.6.5 (2026-03-18)
 
 ### Added
