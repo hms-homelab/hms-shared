@@ -70,6 +70,10 @@ DbPool::ConnectionGuard DbPool::acquire() {
             conn = create_connection();
         } catch (const std::exception& e) {
             spdlog::error("Failed to reconnect: {}", e.what());
+            // Return the slot to the pool before rethrowing so it isn't
+            // permanently leaked. The stale connection stays in the pool and
+            // gets retried/replaced on a future acquire once the DB recovers.
+            return_connection(std::move(conn));
             throw;
         }
     }
