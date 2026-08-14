@@ -11,13 +11,22 @@
 namespace hms {
 
 /**
- * Supported LLM providers
+ * Supported LLM providers.
+ *
+ * `endpoint` is always a BASE URL and the provider decides what path to append
+ * to it. That is what makes OPENAI mean "any server speaking the OpenAI chat
+ * API" rather than api.openai.com specifically: OpenAI itself, OpenRouter,
+ * LM Studio, vLLM, llama.cpp's server, Groq, Together, or Ollama's own /v1
+ * surface all work by pointing `endpoint` at them.
+ *
+ * OLLAMA is kept separate because it speaks its own /api/generate protocol,
+ * not because Ollama cannot be reached through OPENAI. It can.
  */
 enum class LLMProvider {
-    OLLAMA,     // Local Ollama: /api/generate (no auth)
-    OPENAI,     // OpenAI/ChatGPT: /v1/chat/completions (Bearer token)
-    GEMINI,     // Google Gemini: /v1beta/models/{model}:generateContent (API key)
-    ANTHROPIC   // Claude: /v1/messages (x-api-key header)
+    OLLAMA,     // Ollama native: <endpoint>/api/generate (no auth)
+    OPENAI,     // ANY OpenAI-compatible server: <endpoint>/v1/chat/completions (Bearer)
+    GEMINI,     // Google Gemini: <endpoint>/v1beta/models/{model}:generateContent (API key)
+    ANTHROPIC   // Claude: <endpoint>/v1/messages (x-api-key header)
 };
 
 /**
@@ -26,6 +35,7 @@ enum class LLMProvider {
 struct LLMConfig {
     bool enabled = false;
     LLMProvider provider = LLMProvider::OLLAMA;
+    /// BASE URL only, no path. The provider appends its own (see LLMProvider).
     std::string endpoint = "http://localhost:11434";
     std::string model = "llama3.1:8b-instruct-q4_K_M";
     std::string api_key;

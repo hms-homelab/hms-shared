@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.6.10 (2026-08-14)
+
+### Documentation
+- **`LLMProvider::OPENAI` means any OpenAI-compatible server**, not
+  api.openai.com specifically. `endpoint` has always been a base URL that the
+  provider appends its own path to, so OpenAI, OpenRouter, LM Studio, vLLM,
+  llama.cpp and Ollama's own `/v1` surface all work by pointing `endpoint` at
+  them. Nothing about that behaviour changed; it was simply never written down,
+  and a consumer reading "OpenAI/ChatGPT" reasonably concluded a local server
+  was out of scope.
+- `OLLAMA` is documented as being separate because it speaks its own
+  `/api/generate` protocol, not because Ollama is unreachable through `OPENAI`.
+
+
 ## v1.6.9 (2026-08-08)
 
 ### Fixed
