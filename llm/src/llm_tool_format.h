@@ -37,6 +37,23 @@ LLMToolResponse parseOpenAIToolResponse(const nlohmann::json& j);
 LLMToolResponse parseAnthropicToolResponse(const nlohmann::json& j);
 LLMToolResponse parseGeminiToolResponse(const nlohmann::json& j);
 
+// ─── Stream parsing ────────────────────────────────────────────────────────
+
+/**
+ * Extract the text delta carried by ONE raw line of a streaming response.
+ *
+ * Every provider here is line-oriented: Ollama sends NDJSON, the other three
+ * send SSE. This function owns the differences between them, which is what
+ * makes streaming testable against captured lines with no HTTP involved.
+ *
+ * Returns nullopt for every line that carries no text, and there are a lot of
+ * those: blank separators, SSE comments, `event:` lines, OpenAI's `[DONE]`
+ * sentinel, Ollama's final `done:true` frame, Anthropic's non-text events, and
+ * anything that fails to parse. A caller can therefore treat nullopt as
+ * "nothing to emit" and never has to know why.
+ */
+std::optional<std::string> parseStreamLine(LLMProvider provider, const std::string& line);
+
 // ─── Embedding response parsing ────────────────────────────────────────────
 
 std::vector<float> parseOllamaEmbedding(const nlohmann::json& j);

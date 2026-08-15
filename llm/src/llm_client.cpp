@@ -189,6 +189,120 @@ std::optional<std::string> LLMClient::httpPost(const std::string& url,
     return response;
 }
 
+// ─── HTTP POST, streamed ────────────────────────────────────────────────────
+
+namespace {
+
+struct StreamContext {
+    std::string pending;                                    // partial trailing line
+    const std::function<bool(const std::string&)>* on_line = nullptr;
+    std::string head;                                       // first bytes, for error reporting
+    bool stopped_by_callback = false;
+};
+
+// curl hands us arbitrary byte boundaries, not lines, so a fragment of a line
+// can and does span two calls. `pending` is what makes that harmless.
+size_t streamWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    auto* ctx = static_cast<StreamContext*>(userp);
+    const size_t n = size * nmemb;
+
+    if (ctx->head.size() < 500) {
+        ctx->head.append(static_cast<char*>(contents),
+                         std::min(n, size_t{500} - ctx->head.size()));
+    }
+
+    ctx->pending.append(static_cast<char*>(contents), n);
+
+    size_t pos;
+    while ((pos = ctx->pending.find('\n')) != std::string::npos) {
+        std::string line = ctx->pending.substr(0, pos);
+        ctx->pending.erase(0, pos + 1);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (!(*ctx->on_line)(line)) {
+            ctx->stopped_by_callback = true;
+            return 0;   // short write: curl ends the transfer with CURLE_WRITE_ERROR
+        }
+    }
+    return n;
+}
+
+} // namespace
+
+bool LLMClient::httpPostStream(const std::string& url,
+                                const std::string& body,
+                                struct curl_slist* headers,
+                                const std::function<bool(const std::string& line)>& on_line,
+                                const std::atomic<bool>* abort_flag,
+                                bool* was_aborted) {
+    if (was_aborted) *was_aborted = false;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        std::cerr << "LLM: curl_easy_init() failed" << std::endl;
+        return false;
+    }
+
+    StreamContext ctx;
+    ctx.on_line = &on_line;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.timeout_seconds);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, config_.connect_timeout_seconds);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
+    if (abort_flag) {
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortProgressCallback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, abort_flag);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+
+    // A trailing line with no newline after it still carries a frame. Ollama
+    // ends its last NDJSON object this way often enough to matter.
+    if (res == CURLE_OK && !ctx.pending.empty() && !ctx.stopped_by_callback) {
+        std::string last = ctx.pending;
+        if (!last.empty() && last.back() == '\r') last.pop_back();
+        on_line(last);
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+    curl_easy_cleanup(curl);
+
+    if (ctx.stopped_by_callback) {
+        // The consumer asked to stop. Not an error, and not an abort either.
+        return true;
+    }
+
+    if (res == CURLE_ABORTED_BY_CALLBACK) {
+        std::cerr << "LLM: stream aborted by callback" << std::endl;
+        if (was_aborted) *was_aborted = true;
+        return false;
+    }
+
+    if (res != CURLE_OK) {
+        std::cerr << "LLM: stream request failed: " << curl_easy_strerror(res) << std::endl;
+        return false;
+    }
+
+    if (http_code != 200) {
+        std::cerr << "LLM: HTTP " << http_code << " from "
+                  << providerName(config_.provider) << std::endl;
+        if (!ctx.head.empty()) std::cerr << "LLM: " << ctx.head << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
 // ─── OLLAMA ─────────────────────────────────────────────────────────────────
 // POST /api/generate {"model":"…","prompt":"…","stream":false}
 // Response: {"response":"…"}
@@ -648,6 +762,109 @@ LLMToolResponse LLMClient::generateWithTools(
     return result;
 }
 
+// ─── generateStream (dispatch with timing and abort) ────────────────────────
+
+LLMResponse LLMClient::generateStream(const std::vector<ChatMessage>& messages,
+                                        const StreamCallback& on_delta,
+                                        const std::atomic<bool>* abort_flag) {
+    LLMResponse result;
+    auto start = std::chrono::steady_clock::now();
+
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        return result;
+    }
+
+    nlohmann::json req;
+    std::string url;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    switch (config_.provider) {
+        case LLMProvider::OLLAMA: {
+            url = config_.endpoint + "/api/chat";
+            req["model"] = config_.model;
+            req["stream"] = true;
+            req["messages"] = tool_format::buildOllamaMessages(messages);
+            req["options"] = {{"temperature", config_.temperature}};
+            req["keep_alive"] = config_.keep_alive_seconds;
+            break;
+        }
+        case LLMProvider::OPENAI: {
+            url = config_.endpoint + "/v1/chat/completions";
+            req["model"] = config_.model;
+            req["stream"] = true;
+            req["messages"] = tool_format::buildOpenAIMessages(messages);
+            req["temperature"] = config_.temperature;
+            req["max_completion_tokens"] = config_.max_tokens;
+            std::string auth = "Authorization: Bearer " + config_.api_key;
+            headers = curl_slist_append(headers, auth.c_str());
+            break;
+        }
+        case LLMProvider::ANTHROPIC: {
+            url = config_.endpoint + "/v1/messages";
+            auto am = tool_format::buildAnthropicMessages(messages);
+            req["model"] = config_.model;
+            req["stream"] = true;
+            req["max_tokens"] = config_.max_tokens;
+            req["messages"] = am.messages;
+            if (!am.system_prompt.empty()) {
+                req["system"] = am.system_prompt;
+            }
+            std::string api_header = "x-api-key: " + config_.api_key;
+            headers = curl_slist_append(headers, api_header.c_str());
+            headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
+            break;
+        }
+        case LLMProvider::GEMINI: {
+            // alt=sse matters: without it this endpoint streams a JSON ARRAY
+            // rather than server-sent events, and nothing here would parse it.
+            url = config_.endpoint + "/v1beta/models/" + config_.model +
+                  ":streamGenerateContent?alt=sse&key=" + config_.api_key;
+            req["contents"] = tool_format::buildGeminiMessages(messages);
+            req["generationConfig"] = {
+                {"temperature", config_.temperature},
+                {"maxOutputTokens", config_.max_tokens}
+            };
+            break;
+        }
+    }
+
+    std::string full;
+    bool consumer_stopped = false;
+
+    auto on_line = [&](const std::string& line) -> bool {
+        auto delta = tool_format::parseStreamLine(config_.provider, line);
+        if (!delta) return true;
+        full += *delta;
+        if (!on_delta(*delta)) {
+            consumer_stopped = true;
+            return false;
+        }
+        return true;
+    };
+
+    bool was_aborted = false;
+    bool ok = httpPostStream(url, req.dump(), headers, on_line, abort_flag, &was_aborted);
+    curl_slist_free_all(headers);
+
+    auto end = std::chrono::steady_clock::now();
+    result.elapsed_seconds = std::chrono::duration<double>(end - start).count();
+
+    if (was_aborted || (abort_flag && abort_flag->load(std::memory_order_acquire))) {
+        result.was_aborted = true;
+    }
+
+    // Whatever arrived before a stop or an abort is still real text the caller
+    // has already seen, so it is returned rather than thrown away. Only a
+    // transport failure that produced nothing at all yields nullopt.
+    if (ok || consumer_stopped || !full.empty()) {
+        result.text = full;
+    }
+
+    return result;
+}
+
 // ─── embed ──────────────────────────────────────────────────────────────────
 
 std::vector<float> LLMClient::embed(const std::string& text) {
@@ -1071,6 +1288,104 @@ std::vector<float> parseOpenAIEmbedding(const json& j) {
         }
     }
     return result;
+}
+
+// ─── Stream parsing ────────────────────────────────────────────────────────
+
+// Strips the "data:" prefix from an SSE line. Returns nullopt for lines that
+// carry no payload at all: blanks, comments, and `event:` lines, which SSE uses
+// for framing and which every provider here duplicates inside the JSON anyway.
+static std::optional<std::string> ssePayload(const std::string& line) {
+    if (line.empty()) return std::nullopt;
+    if (line[0] == ':') return std::nullopt;                    // SSE comment
+    if (line.rfind("event:", 0) == 0) return std::nullopt;      // framing only
+    if (line.rfind("data:", 0) != 0) return std::nullopt;
+
+    std::string payload = line.substr(5);
+    // The space after "data:" is optional in the spec and present in practice.
+    if (!payload.empty() && payload[0] == ' ') payload.erase(0, 1);
+    if (payload.empty()) return std::nullopt;
+    return payload;
+}
+
+std::optional<std::string> parseStreamLine(LLMProvider provider, const std::string& line) {
+    std::string payload;
+
+    if (provider == LLMProvider::OLLAMA) {
+        // NDJSON: the line IS the object, no SSE framing.
+        if (line.empty()) return std::nullopt;
+        payload = line;
+    } else {
+        auto p = ssePayload(line);
+        if (!p) return std::nullopt;
+        // OpenAI's end sentinel is not JSON, so it has to be caught before parsing.
+        if (*p == "[DONE]") return std::nullopt;
+        payload = *p;
+    }
+
+    json j;
+    try {
+        j = json::parse(payload);
+    } catch (const std::exception&) {
+        // A malformed frame is not worth failing a whole answer over. The
+        // transfer continues and the fragment is simply not emitted.
+        return std::nullopt;
+    }
+
+    std::string text;
+
+    switch (provider) {
+        case LLMProvider::OLLAMA:
+            // {"message":{"content":"..."},"done":false}; the final done:true
+            // frame carries timings and an empty content.
+            if (j.contains("message") && j["message"].contains("content") &&
+                j["message"]["content"].is_string()) {
+                text = j["message"]["content"].get<std::string>();
+            }
+            break;
+
+        case LLMProvider::OPENAI:
+            // {"choices":[{"delta":{"content":"..."}}]}; the first frame carries
+            // only a role, and the last carries only a finish_reason.
+            if (j.contains("choices") && !j["choices"].empty()) {
+                const auto& d = j["choices"][0];
+                if (d.contains("delta") && d["delta"].contains("content") &&
+                    d["delta"]["content"].is_string()) {
+                    text = d["delta"]["content"].get<std::string>();
+                }
+            }
+            break;
+
+        case LLMProvider::ANTHROPIC:
+            // Many event types share the stream; only content_block_delta with a
+            // text_delta carries prose. thinking_delta and input_json_delta ride
+            // the same channel and must NOT be treated as answer text.
+            if (j.value("type", "") == "content_block_delta" &&
+                j.contains("delta") &&
+                j["delta"].value("type", "") == "text_delta" &&
+                j["delta"].contains("text") && j["delta"]["text"].is_string()) {
+                text = j["delta"]["text"].get<std::string>();
+            }
+            break;
+
+        case LLMProvider::GEMINI:
+            // {"candidates":[{"content":{"parts":[{"text":"..."}]}}]}; a frame
+            // can carry more than one part, so they are concatenated in order.
+            if (j.contains("candidates") && !j["candidates"].empty()) {
+                const auto& c = j["candidates"][0];
+                if (c.contains("content") && c["content"].contains("parts")) {
+                    for (const auto& part : c["content"]["parts"]) {
+                        if (part.contains("text") && part["text"].is_string()) {
+                            text += part["text"].get<std::string>();
+                        }
+                    }
+                }
+            }
+            break;
+    }
+
+    if (text.empty()) return std::nullopt;
+    return text;
 }
 
 } // namespace hms::tool_format

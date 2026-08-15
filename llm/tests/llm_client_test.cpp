@@ -316,3 +316,149 @@ TEST_CASE("parseOpenAIEmbedding — empty when no data", "[llm][embed]") {
     auto vec = parseOpenAIEmbedding(j);
     REQUIRE(vec.empty());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stream parsing
+//
+// Frames below are shaped as the providers actually send them. The cases that
+// matter most are the ones that must NOT yield text: a stream carries far more
+// framing than prose, and anything mistaken for prose ends up on a user's
+// screen.
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("parseStreamLine — Ollama content frame", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::OLLAMA,
+        R"({"model":"gpt-oss:120b-cloud","message":{"role":"assistant","content":"Your AHI"},"done":false})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "Your AHI");
+}
+
+TEST_CASE("parseStreamLine — Ollama final done frame carries no text", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::OLLAMA,
+        R"({"model":"m","message":{"role":"assistant","content":""},"done":true,"total_duration":51})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — Ollama thinking field is NOT answer text", "[llm][stream]") {
+    // Captured from gpt-oss:120b on the relay 2026-08-14. Reasoning models on
+    // Ollama emit `thinking` alongside an EMPTY `content` for the whole
+    // reasoning phase (119 such frames in one measured turn). Emitting it would
+    // put the model's private planning in front of the user.
+    auto d = parseStreamLine(LLMProvider::OLLAMA,
+        R"({"model":"gpt-oss:120b","message":{"role":"assistant","content":"","thinking":"We just need to respond"},"done":false})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — Ollama takes no SSE framing", "[llm][stream]") {
+    // Ollama is NDJSON. A data: prefix would mean we pointed the wrong parser
+    // at the stream, and it must not silently half-work.
+    auto d = parseStreamLine(LLMProvider::OLLAMA,
+        R"(data: {"message":{"content":"hi"}})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — OpenAI delta", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"index":0,"delta":{"content":"was 4.1"},"finish_reason":null}]})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "was 4.1");
+}
+
+TEST_CASE("parseStreamLine — OpenAI role-only opening frame", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — OpenAI [DONE] sentinel is not JSON", "[llm][stream]") {
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI, "data: [DONE]").has_value());
+}
+
+TEST_CASE("parseStreamLine — OpenAI finish frame", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — Anthropic text_delta", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"last night"}})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "last night");
+}
+
+TEST_CASE("parseStreamLine — Anthropic thinking_delta is NOT answer text", "[llm][stream]") {
+    // Rides the same channel as prose. Emitting it would put the model's
+    // reasoning in front of the user.
+    auto d = parseStreamLine(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — Anthropic input_json_delta is NOT answer text", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}})");
+    REQUIRE_FALSE(d.has_value());
+}
+
+TEST_CASE("parseStreamLine — Anthropic non-delta events", "[llm][stream]") {
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"message_start","message":{"id":"msg_1"}})").has_value());
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"message_stop"})").has_value());
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC, "event: content_block_delta").has_value());
+}
+
+TEST_CASE("parseStreamLine — Gemini single part", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::GEMINI,
+        R"(data: {"candidates":[{"content":{"parts":[{"text":"Tuesday"}],"role":"model"}}]})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "Tuesday");
+}
+
+TEST_CASE("parseStreamLine — Gemini concatenates multiple parts in order", "[llm][stream]") {
+    auto d = parseStreamLine(LLMProvider::GEMINI,
+        R"(data: {"candidates":[{"content":{"parts":[{"text":"Tues"},{"text":"day"}]}}]})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "Tuesday");
+}
+
+TEST_CASE("parseStreamLine — SSE noise yields nothing", "[llm][stream]") {
+    for (auto provider : {LLMProvider::OPENAI, LLMProvider::ANTHROPIC, LLMProvider::GEMINI}) {
+        REQUIRE_FALSE(parseStreamLine(provider, "").has_value());          // separator
+        REQUIRE_FALSE(parseStreamLine(provider, ": keep-alive").has_value());  // comment
+        REQUIRE_FALSE(parseStreamLine(provider, "id: 42").has_value());    // unused field
+        REQUIRE_FALSE(parseStreamLine(provider, "data:").has_value());     // empty payload
+    }
+}
+
+TEST_CASE("parseStreamLine — data: with no space after the colon", "[llm][stream]") {
+    // The space is optional in the SSE spec even though every provider sends it.
+    auto d = parseStreamLine(LLMProvider::OPENAI,
+        R"(data:{"choices":[{"delta":{"content":"x"}}]})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == "x");
+}
+
+TEST_CASE("parseStreamLine — malformed JSON does not throw", "[llm][stream]") {
+    // A truncated frame must cost one fragment, never the whole answer.
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI, R"(data: {"choices":[{"del)").has_value());
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::OLLAMA, "{not json at all").has_value());
+}
+
+TEST_CASE("parseStreamLine — empty content string is not a delta", "[llm][stream]") {
+    // Emitting these would fire the consumer's callback for nothing.
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"delta":{"content":""}}]})").has_value());
+    REQUIRE_FALSE(parseStreamLine(LLMProvider::OLLAMA,
+        R"({"message":{"content":""},"done":false})").has_value());
+}
+
+TEST_CASE("parseStreamLine — whitespace-only content IS a delta", "[llm][stream]") {
+    // The space between two words arrives as its own frame. Dropping it would
+    // run the answer together.
+    auto d = parseStreamLine(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"delta":{"content":" "}}]})");
+    REQUIRE(d.has_value());
+    REQUIRE(*d == " ");
+}

@@ -103,6 +103,15 @@ struct LLMToolResponse {
 };
 
 /**
+ * Receives each text delta as it arrives from a streaming call.
+ *
+ * Return false to stop the transfer. That is the caller's own stop button, and
+ * it is distinct from `abort_flag`: the flag is for another thread cancelling
+ * the request, this is for the consumer deciding it has heard enough.
+ */
+using StreamCallback = std::function<bool(const std::string& delta)>;
+
+/**
  * LLMClient - Multi-provider LLM client for HMS services
  *
  * Supports Ollama, OpenAI/ChatGPT, Google Gemini, and Anthropic Claude.
@@ -155,6 +164,28 @@ public:
         const std::vector<ChatMessage>& messages,
         const std::vector<ToolDefinition>& tools,
         const std::atomic<bool>* abort_flag = nullptr);
+
+    /**
+     * Streaming chat completion, text only.
+     *
+     * Supports all 4 providers. `on_delta` is called on the calling thread for
+     * each text fragment as it arrives, and returning false from it stops the
+     * transfer. The complete text is ALSO returned in the result, so a caller
+     * that only wants the whole answer can pass a callback that always returns
+     * true and ignore the deltas.
+     *
+     * Deliberately has no `tools` parameter. Tool rounds have nothing to show a
+     * user, so they stay on generateWithTools; this is for the final answer
+     * turn, where the waiting happens.
+     *
+     * @param messages   Conversation so far, same shape as generateWithTools
+     * @param on_delta   Called per fragment; return false to stop
+     * @param abort_flag Optional atomic flag to abort the request mid-flight
+     * @return LLMResponse with the complete text, abort status, elapsed time
+     */
+    LLMResponse generateStream(const std::vector<ChatMessage>& messages,
+                                const StreamCallback& on_delta,
+                                const std::atomic<bool>* abort_flag = nullptr);
 
     /**
      * Generate text embeddings (Ollama, OpenAI only)
@@ -237,6 +268,20 @@ private:
                                          struct curl_slist* headers,
                                          const std::atomic<bool>* abort_flag = nullptr,
                                          bool* was_aborted = nullptr);
+
+    /**
+     * POST that hands the response back one line at a time as it arrives.
+     *
+     * Both NDJSON (Ollama) and SSE (everyone else) are line-oriented, so line
+     * assembly lives here once and each provider only has to interpret a line.
+     * `on_line` returning false stops the transfer.
+     */
+    bool httpPostStream(const std::string& url,
+                         const std::string& body,
+                         struct curl_slist* headers,
+                         const std::function<bool(const std::string& line)>& on_line,
+                         const std::atomic<bool>* abort_flag = nullptr,
+                         bool* was_aborted = nullptr);
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
 };

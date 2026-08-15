@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.6.11 (2026-08-14)
+
+### Added
+- **`LLMClient::generateStream()`** — streaming chat completion, text only, on
+  all four providers. `on_delta` is called per text fragment as it arrives and
+  returning `false` from it stops the transfer, which is a consumer's stop
+  button and is distinct from `abort_flag` (another thread cancelling). The
+  complete text is returned in the result as well, so a caller that only wants
+  the whole answer can ignore the deltas.
+
+  Deliberately takes no `tools` parameter. Tool rounds have nothing to show a
+  user, so they stay on `generateWithTools`; this is for the final answer turn,
+  which is where the waiting happens.
+
+- **`tool_format::parseStreamLine(provider, line)`** — extracts the text delta
+  from one raw stream line. Every provider here is line-oriented (Ollama sends
+  NDJSON, the other three send SSE), so line assembly happens once in
+  `httpPostStream` and each provider only has to interpret a line. Exposed
+  through `llm_tool_format.h` so streaming is testable against captured frames
+  with no HTTP involved, matching how the tool parsers are already tested.
+
+### Notes for consumers
+- **Reasoning is not answer text, and both ride the same stream.** Anthropic
+  sends `thinking_delta` and `input_json_delta` next to `text_delta`, and
+  reasoning models on Ollama (measured on `gpt-oss:120b`) emit a `thinking`
+  field alongside an *empty* `content` for the whole reasoning phase. Only
+  `content` and `text_delta` are treated as answer text, so a model's private
+  planning never reaches a caller. Both cases are covered by tests.
+- **Time to first token is not time to first word on a reasoning model.**
+  Measured against the relay: 119 thinking frames arrive between 0.28s and
+  0.94s, and the first actual content frame lands at 0.94s with the answer
+  complete at 1.36s. A UI that shows nothing until the first content delta will
+  look frozen for about a second.
+- Gemini uses `:streamGenerateContent?alt=sse`. Without `alt=sse` that endpoint
+  streams a JSON array rather than server-sent events, which no line parser
+  would handle.
+- A malformed frame costs one fragment, not the answer: it is skipped and the
+  transfer continues.
+- Verified live against OpenAI (`gpt-4.1-nano`, 38 deltas, first at 0.81s) and
+  the Ollama relay (`gpt-oss:120b-cloud`, 70 deltas), including the stop button,
+  `abort_flag`, and a 401 producing zero deltas rather than emitting the error
+  body as text.
+
 ## v1.6.10 (2026-08-14)
 
 ### Documentation
