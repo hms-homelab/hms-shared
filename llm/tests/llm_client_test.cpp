@@ -91,6 +91,38 @@ TEST_CASE("buildOllamaMessages — basic roles", "[llm][messages]") {
     REQUIRE(arr[1]["content"] == "Hello");
 }
 
+TEST_CASE("buildOllamaMessages — tool_calls arguments stay an OBJECT", "[llm][messages]") {
+    // Ollama rejects the whole request when `arguments` is a JSON string, with
+    // an error that reads like a malformed body rather than a type mismatch:
+    //   {"error":"Value looks like object, but can't find closing '}' symbol"}
+    // The first round never carries tool_calls, so this only breaks on the
+    // SECOND round, which is why it went unnoticed until an agent loop ran.
+    ChatMessage assistant;
+    assistant.role = "assistant";
+    assistant.content = "";
+    assistant.tool_calls = {{"call_1", "get_night", json({{"date", "2026-08-14"}})}};
+
+    auto arr = buildOllamaMessages({assistant});
+    REQUIRE(arr.size() == 1);
+    const auto& args = arr[0]["tool_calls"][0]["function"]["arguments"];
+    REQUIRE(args.is_object());
+    REQUIRE_FALSE(args.is_string());
+    REQUIRE(args["date"] == "2026-08-14");
+}
+
+TEST_CASE("buildOpenAIMessages — tool_calls arguments stay a STRING", "[llm][messages]") {
+    // The mirror of the case above: OpenAI wants the opposite, so the two
+    // builders must NOT be collapsed back into one.
+    ChatMessage assistant;
+    assistant.role = "assistant";
+    assistant.tool_calls = {{"call_1", "get_night", json({{"date", "2026-08-14"}})}};
+
+    auto arr = buildOpenAIMessages({assistant});
+    const auto& args = arr[0]["tool_calls"][0]["function"]["arguments"];
+    REQUIRE(args.is_string());
+    REQUIRE(args.get<std::string>().find("2026-08-14") != std::string::npos);
+}
+
 TEST_CASE("buildOpenAIMessages — tool result includes tool_call_id", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"tool", "{\"temp\": 72}", {}, "call_123"},

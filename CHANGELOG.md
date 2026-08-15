@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.12 (2026-08-15)
+
+### Fixed
+- **`generateWithTools` was broken for Ollama on every round after the first.**
+  `buildOllamaMessages` serialised assistant `tool_calls` through the OpenAI
+  serializer, which renders `arguments` as a JSON **string**. Ollama requires a
+  JSON **object** and rejects the entire request with
+
+      {"error":"Value looks like object, but can't find closing '}' symbol"}
+
+  which reads like a malformed body rather than a type mismatch in one field.
+
+  The first round never carries `tool_calls`, so it always worked; the break
+  only appeared on the second round, when the assistant's own tool call is
+  echoed back alongside the tool result. Any Ollama tool loop therefore died
+  the moment it actually used a tool. Found by running a real agent loop
+  against the relay, not by a unit test.
+
+  OpenAI still gets the string form, so the two builders must not be collapsed
+  back into one. Both directions now have a test.
+
 ## v1.6.11 (2026-08-14)
 
 ### Added

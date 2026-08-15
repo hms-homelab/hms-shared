@@ -1049,12 +1049,36 @@ static json serializeToolCalls_OpenAI(const std::vector<ToolCall>& calls) {
     return arr;
 }
 
+// Ollama wants `arguments` as a JSON OBJECT. OpenAI wants it as a STRING
+// containing JSON. They are otherwise identical, which is exactly why this was
+// wrong for so long: the first round works either way, because it carries no
+// tool_calls. The break only appears on the SECOND round, when the assistant's
+// own tool call is echoed back, and Ollama answers:
+//
+//   {"error":"Value looks like object, but can't find closing '}' symbol"}
+//
+// which reads like a malformed body rather than a type mismatch in one field.
+static json serializeToolCalls_Ollama(const std::vector<ToolCall>& calls) {
+    json arr = json::array();
+    for (const auto& tc : calls) {
+        arr.push_back({
+            {"id", tc.id},
+            {"type", "function"},
+            {"function", {
+                {"name", tc.name},
+                {"arguments", tc.arguments}   // object, NOT .dump()
+            }}
+        });
+    }
+    return arr;
+}
+
 json buildOllamaMessages(const std::vector<ChatMessage>& messages) {
     json arr = json::array();
     for (const auto& m : messages) {
         json msg = {{"role", m.role}, {"content", m.content}};
         if (!m.tool_calls.empty()) {
-            msg["tool_calls"] = serializeToolCalls_OpenAI(m.tool_calls);
+            msg["tool_calls"] = serializeToolCalls_Ollama(m.tool_calls);
         }
         arr.push_back(msg);
     }
