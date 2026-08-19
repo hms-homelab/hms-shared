@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
 #include <queue>
 #include <pqxx/pqxx>
 
@@ -47,7 +48,12 @@ public:
         std::unique_ptr<pqxx::connection> conn_;
     };
 
-    /// Acquire a connection from the pool (blocks if none available)
+    /// Acquire a connection from the pool (blocks if none available).
+    /// If the pool never reached its configured size — e.g. the database was
+    /// unreachable when some initial connections were created — acquire()
+    /// will opportunistically try to backfill a missing slot, subject to
+    /// exponential backoff so a sustained outage doesn't turn into a
+    /// reconnect storm against the database.
     ConnectionGuard acquire();
 
     /// Get the connection string
@@ -71,6 +77,16 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     int total_created_ = 0;
+
+    // Backfill backoff state (guarded by mutex_). When the pool is short of
+    // pool_size_ connections, acquire() won't retry creating one again until
+    // steady_clock::now() >= next_retry_at_. retry_delay_ doubles on every
+    // failed backfill attempt, up to kMaxRetryDelay, and resets to
+    // kInitialRetryDelay as soon as a backfill succeeds.
+    static constexpr std::chrono::milliseconds kInitialRetryDelay{1000};
+    static constexpr std::chrono::milliseconds kMaxRetryDelay{30000};
+    std::chrono::steady_clock::time_point next_retry_at_{};
+    std::chrono::milliseconds retry_delay_{kInitialRetryDelay};
 };
 
 } // namespace hms
