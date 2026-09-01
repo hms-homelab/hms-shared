@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.6.13 (2026-09-01)
+## v1.6.14 (2026-09-01)
 
 ### Added
 - **`generateWithTools` can force a specific tool.** New optional `force_tool`
@@ -35,6 +35,13 @@
   from "unsupported" to "looked supported and quietly did not happen". A caller
   whose correctness depends on the call actually happening must ask this and
   refuse to start, rather than discover it one ungrounded answer at a time.
+
+## v1.6.13 (2026-09-01)
+
+### Fixed
+- **Self-healing `DbPool`**: `acquire()` backfills missing connections with
+  exponential backoff. Tagged without a changelog entry; recorded here so the
+  tag and this file agree.
 
 ## v1.6.12 (2026-08-15)
 
