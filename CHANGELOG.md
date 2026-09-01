@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.6.13 (2026-09-01)
+
+### Added
+- **`generateWithTools` can force a specific tool.** New optional `force_tool`
+  argument, after `abort_flag` so every existing call site is unchanged. Empty
+  (the default) leaves the choice to the model, exactly as before.
+
+  Offered a tool it does not think it needs, a model will often answer from its
+  own training instead, and the reply comes back fluent, plausible and
+  ungrounded. `cpapdash-ai`'s `WebSearch` already worked around this by talking
+  to the OpenAI Responses API directly with `"tool_choice":"required"` and
+  measured it: unforced returned 0 citations, forced returned 3. This brings the
+  same control to the normal conversational path.
+
+  The per-provider shape lives in `tool_format::applyToolChoice`, alongside the
+  other provider differences and unit-tested there, rather than inline in
+  `generateWithTools` where it cannot be tested without a live HTTP call.
+
+  | Provider | Field |
+  |---|---|
+  | OpenAI | `tool_choice: {type: function, function: {name}}` |
+  | Anthropic | `tool_choice: {type: tool, name}` |
+  | Gemini | `toolConfig.functionCallingConfig: {mode: ANY, allowedFunctionNames: [name]}` |
+  | Ollama | **not supported** |
+
+  Gemini needs both halves: `mode: ANY` alone means "call something", which
+  would let it pick any tool on the list rather than the named one.
+
+- **`supportsForcedTool()`**, because **Ollama cannot force.** Its `/api/chat`
+  has no `tool_choice` equivalent, so `force_tool` is ignored there and the
+  model may still answer in prose without calling anything. That difference is
+  silent in the request body, so it is not faked — a fake would move the failure
+  from "unsupported" to "looked supported and quietly did not happen". A caller
+  whose correctness depends on the call actually happening must ask this and
+  refuse to start, rather than discover it one ungrounded answer at a time.
+
 ## v1.6.12 (2026-08-15)
 
 ### Fixed

@@ -76,6 +76,64 @@ TEST_CASE("buildGeminiTools — wrapped in functionDeclarations", "[llm][tools]"
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Forced tool choice
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("applyToolChoice — OpenAI names the function", "[llm][tools][force]") {
+    json req;
+    applyToolChoice(req, LLMProvider::OPENAI, "explain_leak");
+    REQUIRE(req["tool_choice"]["type"] == "function");
+    REQUIRE(req["tool_choice"]["function"]["name"] == "explain_leak");
+}
+
+TEST_CASE("applyToolChoice — Anthropic names the tool", "[llm][tools][force]") {
+    json req;
+    applyToolChoice(req, LLMProvider::ANTHROPIC, "explain_leak");
+    REQUIRE(req["tool_choice"]["type"] == "tool");
+    REQUIRE(req["tool_choice"]["name"] == "explain_leak");
+}
+
+TEST_CASE("applyToolChoice — Gemini needs BOTH mode and the allow-list",
+          "[llm][tools][force]") {
+    json req;
+    applyToolChoice(req, LLMProvider::GEMINI, "explain_leak");
+    auto cfg = req["toolConfig"]["functionCallingConfig"];
+    // mode ANY on its own only means "call something", which would let it pick
+    // any tool on the list rather than this one.
+    REQUIRE(cfg["mode"] == "ANY");
+    REQUIRE(cfg["allowedFunctionNames"].size() == 1);
+    REQUIRE(cfg["allowedFunctionNames"][0] == "explain_leak");
+}
+
+TEST_CASE("applyToolChoice — Ollama cannot force, and does not pretend to",
+          "[llm][tools][force]") {
+    json req;
+    applyToolChoice(req, LLMProvider::OLLAMA, "explain_leak");
+    // /api/chat has no tool_choice. The request must come out untouched rather
+    // than carrying a field the server ignores, so the only thing that answers
+    // "will this force" is supportsForcedTool().
+    REQUIRE(req.empty());
+}
+
+TEST_CASE("applyToolChoice — an empty name is a no-op everywhere",
+          "[llm][tools][force]") {
+    for (auto p : {LLMProvider::OPENAI, LLMProvider::ANTHROPIC,
+                   LLMProvider::GEMINI, LLMProvider::OLLAMA}) {
+        json req;
+        applyToolChoice(req, p, "");
+        REQUIRE(req.empty());
+    }
+}
+
+TEST_CASE("applyToolChoice — leaves the rest of the request alone",
+          "[llm][tools][force]") {
+    json req = {{"model", "gpt-4.1"}, {"messages", json::array()}};
+    applyToolChoice(req, LLMProvider::OPENAI, "explain_leak");
+    REQUIRE(req["model"] == "gpt-4.1");
+    REQUIRE(req["messages"].is_array());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Message serialization
 // ═══════════════════════════════════════════════════════════════════════════
 

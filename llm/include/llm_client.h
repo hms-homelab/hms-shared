@@ -159,11 +159,34 @@ public:
      *
      * Supports all 4 providers. Returns tool_calls when the model wants to
      * invoke functions, or text when the model produces a final answer.
+     *
+     * `force_tool` names a tool the model MUST call on this request. Empty (the
+     * default) leaves the choice to the model, which is what every existing
+     * caller gets.
+     *
+     * *** OLLAMA CANNOT FORCE. *** Its /api/chat has no tool_choice equivalent,
+     * so `force_tool` is IGNORED there and the model may answer in prose
+     * without calling anything. That is a silent difference, and a caller whose
+     * correctness depends on the call actually happening -- one that treats the
+     * tool result as the only grounded source, say -- must check the provider
+     * itself rather than trusting this parameter. It is not faked here, because
+     * a fake would move the failure from "unsupported" to "looked supported and
+     * quietly did not happen".
+     *
+     * Forcing matters more than it sounds: offered a tool it thinks it does not
+     * need, a model will often answer from its own training instead, and the
+     * reply comes back fluent, plausible and ungrounded.
      */
     LLMToolResponse generateWithTools(
         const std::vector<ChatMessage>& messages,
         const std::vector<ToolDefinition>& tools,
-        const std::atomic<bool>* abort_flag = nullptr);
+        const std::atomic<bool>* abort_flag = nullptr,
+        const std::string& force_tool = "");
+
+    /// True when this client's provider can honour `force_tool`. False for
+    /// Ollama. Exposed so a caller can refuse to start rather than discover it
+    /// one ungrounded answer at a time.
+    bool supportsForcedTool() const;
 
     /**
      * Streaming chat completion, text only.

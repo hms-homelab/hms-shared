@@ -16,6 +16,22 @@ nlohmann::json buildOpenAITools(const std::vector<ToolDefinition>& tools);
 nlohmann::json buildAnthropicTools(const std::vector<ToolDefinition>& tools);
 nlohmann::json buildGeminiTools(const std::vector<ToolDefinition>& tools);
 
+/**
+ * Set the provider's "you must call this tool" field on an outgoing request.
+ *
+ * Every provider spells it differently and Gemini nests it under a different
+ * top-level key entirely, so the shape lives here with the other provider
+ * differences rather than inline in generateWithTools -- which cannot be tested
+ * without a live HTTP call, and this is exactly the kind of per-provider detail
+ * that is wrong silently.
+ *
+ * A no-op when `tool` is empty, and A NO-OP FOR OLLAMA, whose /api/chat has no
+ * equivalent. The caller cannot tell those two apart from the request body, so
+ * LLMClient::supportsForcedTool() is what answers "will this actually force".
+ */
+void applyToolChoice(nlohmann::json& req, LLMProvider provider,
+                     const std::string& tool);
+
 // ─── Message serialization ─────────────────────────────────────────────────
 
 nlohmann::json buildOllamaMessages(const std::vector<ChatMessage>& messages);

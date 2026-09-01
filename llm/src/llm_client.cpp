@@ -662,10 +662,16 @@ std::string LLMClient::base64Encode(const std::vector<unsigned char>& data) {
 
 // ─── generateWithTools (dispatch with timing and abort) ─────────────────────
 
+bool LLMClient::supportsForcedTool() const {
+    // Ollama's /api/chat accepts `tools` but has no tool_choice equivalent.
+    return config_.provider != LLMProvider::OLLAMA;
+}
+
 LLMToolResponse LLMClient::generateWithTools(
     const std::vector<ChatMessage>& messages,
     const std::vector<ToolDefinition>& tools,
-    const std::atomic<bool>* abort_flag) {
+    const std::atomic<bool>* abort_flag,
+    const std::string& force_tool) {
 
     LLMToolResponse result;
     auto start = std::chrono::steady_clock::now();
@@ -729,6 +735,10 @@ LLMToolResponse LLMClient::generateWithTools(
             break;
         }
     }
+
+    // One place, after the switch, so a provider added later cannot be given
+    // tools and quietly miss its forcing field.
+    tool_format::applyToolChoice(req, config_.provider, force_tool);
 
     std::string body = req.dump();
     auto response = httpPost(url, body, headers, abort_flag);
@@ -1006,6 +1016,34 @@ json buildOllamaTools(const std::vector<ToolDefinition>& tools) {
 json buildOpenAITools(const std::vector<ToolDefinition>& tools) {
     // Same format as Ollama (OpenAI-compatible)
     return buildOllamaTools(tools);
+}
+
+void applyToolChoice(json& req, LLMProvider provider, const std::string& tool) {
+    if (tool.empty()) return;
+
+    switch (provider) {
+        case LLMProvider::OLLAMA:
+            // No tool_choice in /api/chat. Deliberately nothing: a fake would
+            // move the failure from "unsupported" to "looked supported and
+            // quietly did not happen".
+            break;
+        case LLMProvider::OPENAI:
+            req["tool_choice"] = {{"type", "function"},
+                                  {"function", {{"name", tool}}}};
+            break;
+        case LLMProvider::ANTHROPIC:
+            req["tool_choice"] = {{"type", "tool"}, {"name", tool}};
+            break;
+        case LLMProvider::GEMINI:
+            // Gemini nests this under its own top-level key, and BOTH halves
+            // are required: mode ANY alone means "call something", which would
+            // let it pick any tool on the list rather than this one.
+            req["toolConfig"]["functionCallingConfig"] = {
+                {"mode", "ANY"},
+                {"allowedFunctionNames", json::array({tool})}
+            };
+            break;
+    }
 }
 
 json buildAnthropicTools(const std::vector<ToolDefinition>& tools) {
