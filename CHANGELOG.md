@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.6.15 (2026-09-27)
+
+### Fixed
+- **`MqttClient` announces `<topic_prefix>/status online` on every connect.**
+  The client sets a retained LWT of `offline` on that topic, but only the
+  caller ever published `online`, once, at startup. When the broker restarted,
+  it published the LWT, the client reconnected on its own, and the retained
+  `offline` stayed. Home Assistant entities that use the topic for
+  availability showed unavailable until the service itself was restarted.
+
+  `connected()` now publishes the retained `online` itself, on the first
+  connect and after every automatic reconnect. Callers that still publish it
+  at startup are harmless and can drop that line.
+
+- New `mqtt_tests` target with a broker test: it takes the client id over to
+  force the LWT, then waits for the reconnect to restore `online`. It needs a
+  real broker (`HMS_MQTT_TEST_BROKER`, plus `_PORT`, `_USER`, `_PASS`) and
+  skips without one.
+
 ## v1.6.14 (2026-09-01)
 
 ### Added

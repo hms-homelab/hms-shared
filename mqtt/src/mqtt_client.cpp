@@ -144,6 +144,12 @@ bool MqttClient::isConnected() const {
 void MqttClient::connected(const std::string& cause) {
     spdlog::info("MQTT: connected ({})", cause.empty() ? "initial" : cause);
 
+    // Every connect, not just the first: a broker restart publishes the
+    // retained LWT "offline", and nothing else would ever replace it.
+    if (!config_.topic_prefix.empty()) {
+        publish(config_.topic_prefix + "/status", "online", 1, true);
+    }
+
     std::lock_guard lock(mutex_);
     for (const auto& sub : pending_subs_) {
         try {

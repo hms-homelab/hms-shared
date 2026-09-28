@@ -151,4 +151,16 @@ if(HMS_SHARED_BUILD_TESTS)
     )
 
     catch_discover_tests(llm_tests)
+
+    # MQTT tests talk to a real broker; they skip unless HMS_MQTT_TEST_BROKER is set
+    add_executable(mqtt_tests
+        mqtt/tests/mqtt_client_test.cpp
+    )
+
+    target_link_libraries(mqtt_tests PRIVATE
+        hms_shared
+        Catch2::Catch2WithMain
+    )
+
+    catch_discover_tests(mqtt_tests)
 endif()
