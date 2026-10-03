@@ -875,6 +875,89 @@ LLMResponse LLMClient::generateStream(const std::vector<ChatMessage>& messages,
     return result;
 }
 
+// ─── generateStreamWithTools ────────────────────────────────────────────────
+
+bool LLMClient::supportsStreamingTools() const {
+    return config_.provider == LLMProvider::OPENAI;
+}
+
+LLMToolResponse LLMClient::generateStreamWithTools(const std::vector<ChatMessage>& messages,
+                                                   const std::vector<ToolDefinition>& tools,
+                                                   const StreamCallback& on_delta,
+                                                   const std::atomic<bool>* abort_flag,
+                                                   const std::string& force_tool) {
+    if (!supportsStreamingTools()) {
+        // Buffered, then handed over in one piece: the same contract, without
+        // the speed. Kept so a caller never needs a second code path.
+        auto r = generateWithTools(messages, tools, abort_flag, force_tool);
+        if (r.text && !r.text->empty() && !r.was_aborted && !on_delta(*r.text)) {
+            r.stopped_by_consumer = true;
+        }
+        return r;
+    }
+
+    LLMToolResponse result;
+    auto start = std::chrono::steady_clock::now();
+
+    if (abort_flag && abort_flag->load(std::memory_order_acquire)) {
+        result.was_aborted = true;
+        return result;
+    }
+
+    nlohmann::json req;
+    req["model"] = config_.model;
+    req["stream"] = true;
+    req["messages"] = tool_format::buildOpenAIMessages(messages);
+    req["tools"] = tool_format::buildOpenAITools(tools);
+    req["temperature"] = config_.temperature;
+    req["max_completion_tokens"] = config_.max_tokens;
+    tool_format::applyToolChoice(req, config_.provider, force_tool);
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    std::string auth = "Authorization: Bearer " + config_.api_key;
+    headers = curl_slist_append(headers, auth.c_str());
+
+    tool_format::OpenAIToolStream parser;
+    std::string full;
+    bool consumer_stopped = false;
+
+    auto on_line = [&](const std::string& line) -> bool {
+        auto delta = parser.feed(line);
+        if (!delta) return true;
+        full += *delta;
+        if (!on_delta(*delta)) {
+            consumer_stopped = true;
+            return false;
+        }
+        return true;
+    };
+
+    bool was_aborted = false;
+    bool ok = httpPostStream(config_.endpoint + "/v1/chat/completions", req.dump(), headers,
+                             on_line, abort_flag, &was_aborted);
+    curl_slist_free_all(headers);
+
+    result.elapsed_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    result.stopped_by_consumer = consumer_stopped;
+    if (was_aborted || (abort_flag && abort_flag->load(std::memory_order_acquire))) {
+        result.was_aborted = true;
+    }
+
+    // As generateStream: text that arrived is real and the caller has seen it.
+    if (ok || consumer_stopped || !full.empty()) {
+        result.text = full;
+    }
+    // A stopped or failed transfer can hold half a call; only a finished one
+    // hands its calls back.
+    if (ok && !consumer_stopped && !result.was_aborted) {
+        result.tool_calls = parser.toolCalls();
+    }
+    result.stop_reason = parser.finishReason();
+    return result;
+}
+
 // ─── embed ──────────────────────────────────────────────────────────────────
 
 std::vector<float> LLMClient::embed(const std::string& text) {
@@ -1448,6 +1531,64 @@ std::optional<std::string> parseStreamLine(LLMProvider provider, const std::stri
 
     if (text.empty()) return std::nullopt;
     return text;
+}
+
+std::optional<std::string> OpenAIToolStream::feed(const std::string& line) {
+    auto p = ssePayload(line);
+    if (!p || *p == "[DONE]") return std::nullopt;
+
+    json j;
+    try {
+        j = json::parse(*p);
+    } catch (const std::exception&) {
+        return std::nullopt;   // as parseStreamLine: one bad frame is not an answer lost
+    }
+    if (!j.contains("choices") || j["choices"].empty()) return std::nullopt;
+    const auto& choice = j["choices"][0];
+
+    if (choice.contains("finish_reason") && choice["finish_reason"].is_string()) {
+        finish_reason_ = choice["finish_reason"].get<std::string>();
+    }
+    if (!choice.contains("delta")) return std::nullopt;
+    const auto& d = choice["delta"];
+
+    if (d.contains("tool_calls") && d["tool_calls"].is_array()) {
+        for (const auto& tc : d["tool_calls"]) {
+            Partial& c = calls_[tc.value("index", 0)];
+            if (tc.contains("id") && tc["id"].is_string()) c.id = tc["id"].get<std::string>();
+            if (tc.contains("function")) {
+                const auto& f = tc["function"];
+                if (f.contains("name") && f["name"].is_string()) {
+                    c.name += f["name"].get<std::string>();
+                }
+                if (f.contains("arguments") && f["arguments"].is_string()) {
+                    c.arguments += f["arguments"].get<std::string>();
+                }
+            }
+        }
+    }
+
+    if (d.contains("content") && d["content"].is_string()) {
+        std::string text = d["content"].get<std::string>();
+        if (!text.empty()) return text;
+    }
+    return std::nullopt;
+}
+
+std::vector<ToolCall> OpenAIToolStream::toolCalls() const {
+    std::vector<ToolCall> out;
+    for (const auto& [index, c] : calls_) {
+        ToolCall call;
+        call.id = c.id;
+        call.name = c.name;
+        try {
+            call.arguments = c.arguments.empty() ? json::object() : json::parse(c.arguments);
+        } catch (const std::exception&) {
+            call.arguments = json::object();
+        }
+        out.push_back(std::move(call));
+    }
+    return out;
 }
 
 } // namespace hms::tool_format

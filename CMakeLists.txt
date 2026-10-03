@@ -150,6 +150,10 @@ if(HMS_SHARED_BUILD_TESTS)
         Catch2::Catch2WithMain
     )
 
+    # Recorded provider streams, replayed through the parsers.
+    target_compile_definitions(llm_tests PRIVATE
+        LLM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/llm/tests/fixtures")
+
     catch_discover_tests(llm_tests)
 
     # MQTT tests talk to a real broker; they skip unless HMS_MQTT_TEST_BROKER is set

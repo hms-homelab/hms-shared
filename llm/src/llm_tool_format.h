@@ -7,6 +7,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
+
 namespace hms::tool_format {
 
 // ─── Tool serialization ────────────────────────────────────────────────────
@@ -69,6 +71,35 @@ LLMToolResponse parseGeminiToolResponse(const nlohmann::json& j);
  * "nothing to emit" and never has to know why.
  */
 std::optional<std::string> parseStreamLine(LLMProvider provider, const std::string& line);
+
+/**
+ * One OpenAI chat-completions stream WITH tools, fed line by line.
+ *
+ * Text arrives as `delta.content`; a tool call arrives in pieces under
+ * `delta.tool_calls[]`, keyed by `index`: the first piece carries the id and
+ * the function name, the rest carry slices of the arguments STRING, which is
+ * only JSON once it is whole. So text is handed back per line and tool calls
+ * only at the end, from toolCalls().
+ */
+class OpenAIToolStream {
+public:
+    /// The text delta this line carries, or nullopt.
+    std::optional<std::string> feed(const std::string& line);
+    /// The assembled calls, in index order. A call whose arguments do not
+    /// parse is returned with empty-object arguments rather than dropped, so
+    /// the caller's tool reports the error instead of the call vanishing.
+    std::vector<ToolCall> toolCalls() const;
+    const std::string& finishReason() const { return finish_reason_; }
+
+private:
+    struct Partial {
+        std::string id;
+        std::string name;
+        std::string arguments;
+    };
+    std::map<int, Partial> calls_;
+    std::string finish_reason_;
+};
 
 // ─── Embedding response parsing ────────────────────────────────────────────
 

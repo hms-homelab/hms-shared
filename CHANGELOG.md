@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.6.16 (unreleased)
+
+### Added
+- **`generateStreamWithTools`: a tool round that streams its text.** An agent
+  loop runs `generateWithTools` until the model stops asking for tools, and
+  the round where it stops IS the answer, written in full and buffered. The
+  only way to show it streaming was to throw it away and ask again with
+  `generateStream`, which writes the whole answer twice. This call offers the
+  tools and streams: text deltas go to the callback as they arrive, tool
+  calls are assembled from their fragments and returned whole, and returning
+  false from the callback stops the transfer and sets the new
+  `LLMToolResponse::stopped_by_consumer`.
+
+  Streams on OpenAI. Other providers get `generateWithTools` with the text
+  handed to the callback in one piece; `supportsStreamingTools()` tells them
+  apart.
+
+- Two recorded OpenAI streams (`llm/tests/fixtures/`) replayed through the
+  parser, and a live test that runs only when `OPENAI_API_KEY` is set.
+
 ## v1.6.15 (2026-09-27)
 
 ### Fixed

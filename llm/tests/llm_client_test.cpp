@@ -4,6 +4,9 @@
 #include "llm_client.h"
 #include "../src/llm_tool_format.h"
 
+#include <cstdlib>
+#include <fstream>
+
 using namespace hms;
 using namespace hms::tool_format;
 using json = nlohmann::json;
@@ -551,4 +554,174 @@ TEST_CASE("parseStreamLine — whitespace-only content IS a delta", "[llm][strea
         R"(data: {"choices":[{"delta":{"content":" "}}]})");
     REQUIRE(d.has_value());
     REQUIRE(*d == " ");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OpenAIToolStream (generateStreamWithTools)
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("OpenAIToolStream — a tool call assembled from its fragments", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"role":"assistant","content":null}}]})"));
+    REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_night","arguments":""}}]}}]})"));
+    REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"da"}}]}}]})"));
+    REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"te\":\"2026-09-30\"}"}}]}}]})"));
+    REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]})"));
+    REQUIRE_FALSE(s.feed("data: [DONE]"));
+
+    auto calls = s.toolCalls();
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls[0].id == "call_1");
+    REQUIRE(calls[0].name == "get_night");
+    REQUIRE(calls[0].arguments["date"] == "2026-09-30");
+    REQUIRE(s.finishReason() == "tool_calls");
+}
+
+TEST_CASE("OpenAIToolStream — an answer streams as text with no calls", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    std::string text;
+    for (const char* line : {
+             R"(data: {"choices":[{"delta":{"role":"assistant","content":""}}]})",
+             R"(data: {"choices":[{"delta":{"content":"Your AHI"}}]})",
+             "",
+             R"(data: {"choices":[{"delta":{"content":" was 1.5."}}]})",
+             R"(data: {"choices":[{"delta":{},"finish_reason":"stop"}]})"}) {
+        if (auto d = s.feed(line)) text += *d;
+    }
+    REQUIRE(text == "Your AHI was 1.5.");
+    REQUIRE(s.toolCalls().empty());
+    REQUIRE(s.finishReason() == "stop");
+}
+
+TEST_CASE("OpenAIToolStream — parallel calls keep their order by index", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{}"}}]}}]})");
+    s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"x\":1}"}}]}}]})");
+    auto calls = s.toolCalls();
+    REQUIRE(calls.size() == 2);
+    REQUIRE(calls[0].name == "one");
+    REQUIRE(calls[0].arguments["x"] == 1);
+    REQUIRE(calls[1].name == "two");
+}
+
+TEST_CASE("OpenAIToolStream — unparseable arguments keep the call, empty", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"x\":"}}]}}]})");
+    s.feed("data: {not json");
+    auto calls = s.toolCalls();
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls[0].arguments.is_object());
+    REQUIRE(calls[0].arguments.empty());
+}
+
+// Real gpt-4.1 streams, recorded 2026-10-02 against the chat completions API
+// with one tool offered: the round that calls the tool, and the round that
+// answers from its result (cut off by max_completion_tokens).
+namespace {
+std::vector<std::string> fixtureLines(const std::string& name) {
+    std::ifstream in(std::string(LLM_FIXTURE_DIR) + "/" + name);
+    REQUIRE(in.good());
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    return lines;
+}
+}  // namespace
+
+TEST_CASE("OpenAIToolStream — a recorded tool-call round", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    std::string text;
+    for (const auto& line : fixtureLines("openai_stream_tool_call.sse")) {
+        if (auto d = s.feed(line)) text += *d;
+    }
+    REQUIRE(text.empty());
+    auto calls = s.toolCalls();
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls[0].name == "get_night");
+    REQUIRE(calls[0].id.rfind("call_", 0) == 0);
+    REQUIRE(calls[0].arguments["date"] == "2026-09-30");
+    REQUIRE(s.finishReason() == "tool_calls");
+}
+
+TEST_CASE("OpenAIToolStream — a recorded answer round", "[llm][stream][tools]") {
+    OpenAIToolStream s;
+    std::string text;
+    int deltas = 0;
+    for (const auto& line : fixtureLines("openai_stream_text_after_tool.sse")) {
+        if (auto d = s.feed(line)) { text += *d; ++deltas; }
+    }
+    REQUIRE(text.rfind("On", 0) == 0);
+    REQUIRE(text.find("1.49") != std::string::npos);
+    REQUIRE(deltas > 10);
+    REQUIRE(s.toolCalls().empty());
+    REQUIRE(s.finishReason() == "length");
+}
+
+// Against the real API, and only when OPENAI_API_KEY is set: a tool round,
+// then the answer round streamed. Skipped everywhere else.
+TEST_CASE("generateStreamWithTools — live OpenAI, a tool round then a streamed answer",
+          "[llm][stream][tools][live]") {
+    const char* key = std::getenv("OPENAI_API_KEY");
+    if (!key || !*key) {
+        SUCCEED("OPENAI_API_KEY not set: skipped");
+        return;
+    }
+    LLMConfig cfg;
+    cfg.provider = LLMProvider::OPENAI;
+    cfg.endpoint = "https://api.openai.com";
+    cfg.model = "gpt-4.1";
+    cfg.api_key = key;
+    cfg.max_tokens = 120;
+    LLMClient client(cfg);
+
+    ToolDefinition night{"get_night", "One night of CPAP data",
+                         json{{"type", "object"},
+                              {"properties", {{"date", {{"type", "string"}}}}},
+                              {"required", {"date"}}}};
+    std::vector<ChatMessage> messages{{"user", "How was my night of 2026-09-30?", {}, ""}};
+
+    int deltas = 0;
+    auto first = client.generateStreamWithTools(messages, {night},
+                                                [&](const std::string&) { ++deltas; return true; });
+    REQUIRE(first.tool_calls.size() == 1);
+    REQUIRE(first.tool_calls[0].name == "get_night");
+    REQUIRE(first.tool_calls[0].arguments["date"] == "2026-09-30");
+
+    messages.push_back({"assistant", "", first.tool_calls, ""});
+    messages.push_back({"tool", R"({"ahi":"1.49","hours":"4.03"})", {}, first.tool_calls[0].id});
+    std::string streamed;
+    auto second = client.generateStreamWithTools(
+        messages, {night}, [&](const std::string& d) { streamed += d; ++deltas; return true; });
+    REQUIRE(second.tool_calls.empty());
+    REQUIRE(deltas > 3);
+    REQUIRE(second.text.has_value());
+    REQUIRE(*second.text == streamed);
+    REQUIRE(streamed.find("1.49") != std::string::npos);
+
+    // The consumer's stop button ends the transfer and says so.
+    int seen = 0;
+    auto stopped = client.generateStreamWithTools(
+        messages, {night}, [&](const std::string&) { return ++seen < 2; });
+    REQUIRE(stopped.stopped_by_consumer);
+    REQUIRE(stopped.tool_calls.empty());
+}
+
+TEST_CASE("generateStreamWithTools — a provider without streaming reports nothing on failure",
+          "[llm][stream][tools]") {
+    LLMConfig cfg;
+    cfg.provider = LLMProvider::OLLAMA;
+    cfg.endpoint = "http://127.0.0.1:1";   // nothing listens: the buffered path fails fast
+    cfg.connect_timeout_seconds = 1;
+    LLMClient client(cfg);
+    REQUIRE_FALSE(client.supportsStreamingTools());
+    int deltas = 0;
+    auto r = client.generateStreamWithTools({{"user", "hi", {}, ""}}, {},
+                                            [&](const std::string&) { ++deltas; return true; });
+    REQUIRE_FALSE(r.text.has_value());
+    REQUIRE(r.tool_calls.empty());
+    REQUIRE(deltas == 0);
+
+    LLMConfig oa;
+    oa.provider = LLMProvider::OPENAI;
+    REQUIRE(LLMClient(oa).supportsStreamingTools());
 }

@@ -100,6 +100,9 @@ struct LLMToolResponse {
     bool was_aborted = false;
     double elapsed_seconds = 0;
     std::string stop_reason;      // "end_turn", "tool_use", "stop", etc.
+    /// generateStreamWithTools only: the StreamCallback returned false. `text`
+    /// then holds what had arrived up to that point, which the caller has seen.
+    bool stopped_by_consumer = false;
 };
 
 /**
@@ -209,6 +212,29 @@ public:
     LLMResponse generateStream(const std::vector<ChatMessage>& messages,
                                 const StreamCallback& on_delta,
                                 const std::atomic<bool>* abort_flag = nullptr);
+
+    /**
+     * A tool round that streams its text: the round that turns out to be the
+     * answer is shown as it is written, instead of being buffered and then
+     * asked for a second time with generateStream.
+     *
+     * Text deltas go to `on_delta` as they arrive; tool calls are assembled
+     * from their fragments and returned whole in `tool_calls`, exactly as
+     * generateWithTools returns them. A round can carry both. Returning false
+     * from `on_delta` stops the transfer and sets `stopped_by_consumer`.
+     *
+     * Streams on OpenAI only. On the other providers it is generateWithTools
+     * with any text handed to `on_delta` in one piece at the end: correct, not
+     * incremental. supportsStreamingTools() tells them apart.
+     */
+    LLMToolResponse generateStreamWithTools(const std::vector<ChatMessage>& messages,
+                                            const std::vector<ToolDefinition>& tools,
+                                            const StreamCallback& on_delta,
+                                            const std::atomic<bool>* abort_flag = nullptr,
+                                            const std::string& force_tool = "");
+
+    /// True when generateStreamWithTools streams incrementally (OpenAI).
+    bool supportsStreamingTools() const;
 
     /**
      * Generate text embeddings (Ollama, OpenAI only)
