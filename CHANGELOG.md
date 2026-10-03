@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.6.16 (unreleased)
+## v1.6.16 (2026-10-02)
 
 ### Added
 - **`generateStreamWithTools`: a tool round that streams its text.** An agent
