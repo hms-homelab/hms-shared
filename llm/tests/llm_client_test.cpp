@@ -15,18 +15,18 @@ using json = nlohmann::json;
 // toVectorLiteral
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("toVectorLiteral — empty vector", "[llm][embed]") {
+TEST_CASE("toVectorLiteral -empty vector", "[llm][embed]") {
     REQUIRE(LLMClient::toVectorLiteral({}) == "[]");
 }
 
-TEST_CASE("toVectorLiteral — single element", "[llm][embed]") {
+TEST_CASE("toVectorLiteral -single element", "[llm][embed]") {
     auto s = LLMClient::toVectorLiteral({0.5f});
     REQUIRE(s.front() == '[');
     REQUIRE(s.back() == ']');
     REQUIRE(s.find(',') == std::string::npos);
 }
 
-TEST_CASE("toVectorLiteral — multiple elements", "[llm][embed]") {
+TEST_CASE("toVectorLiteral -multiple elements", "[llm][embed]") {
     auto s = LLMClient::toVectorLiteral({0.1f, 0.2f, 0.3f});
     REQUIRE(s.front() == '[');
     REQUIRE(s.back() == ']');
@@ -46,7 +46,7 @@ static ToolDefinition sampleTool() {
     })};
 }
 
-TEST_CASE("buildOllamaTools — OpenAI-compatible format", "[llm][tools]") {
+TEST_CASE("buildOllamaTools -OpenAI-compatible format", "[llm][tools]") {
     auto arr = buildOllamaTools({sampleTool()});
     REQUIRE(arr.size() == 1);
     REQUIRE(arr[0]["type"] == "function");
@@ -55,13 +55,13 @@ TEST_CASE("buildOllamaTools — OpenAI-compatible format", "[llm][tools]") {
     REQUIRE(arr[0]["function"]["parameters"]["type"] == "object");
 }
 
-TEST_CASE("buildOpenAITools — same as Ollama", "[llm][tools]") {
+TEST_CASE("buildOpenAITools -same as Ollama", "[llm][tools]") {
     auto ollama = buildOllamaTools({sampleTool()});
     auto openai = buildOpenAITools({sampleTool()});
     REQUIRE(ollama == openai);
 }
 
-TEST_CASE("buildAnthropicTools — uses input_schema", "[llm][tools]") {
+TEST_CASE("buildAnthropicTools -uses input_schema", "[llm][tools]") {
     auto arr = buildAnthropicTools({sampleTool()});
     REQUIRE(arr.size() == 1);
     REQUIRE(arr[0].contains("input_schema"));
@@ -69,7 +69,7 @@ TEST_CASE("buildAnthropicTools — uses input_schema", "[llm][tools]") {
     REQUIRE(arr[0]["name"] == "get_weather");
 }
 
-TEST_CASE("buildGeminiTools — wrapped in functionDeclarations", "[llm][tools]") {
+TEST_CASE("buildGeminiTools -wrapped in functionDeclarations", "[llm][tools]") {
     auto arr = buildGeminiTools({sampleTool()});
     REQUIRE(arr.size() == 1);
     REQUIRE(arr[0].contains("functionDeclarations"));
@@ -82,21 +82,21 @@ TEST_CASE("buildGeminiTools — wrapped in functionDeclarations", "[llm][tools]"
 // Forced tool choice
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("applyToolChoice — OpenAI names the function", "[llm][tools][force]") {
+TEST_CASE("applyToolChoice -OpenAI names the function", "[llm][tools][force]") {
     json req;
     applyToolChoice(req, LLMProvider::OPENAI, "explain_leak");
     REQUIRE(req["tool_choice"]["type"] == "function");
     REQUIRE(req["tool_choice"]["function"]["name"] == "explain_leak");
 }
 
-TEST_CASE("applyToolChoice — Anthropic names the tool", "[llm][tools][force]") {
+TEST_CASE("applyToolChoice -Anthropic names the tool", "[llm][tools][force]") {
     json req;
     applyToolChoice(req, LLMProvider::ANTHROPIC, "explain_leak");
     REQUIRE(req["tool_choice"]["type"] == "tool");
     REQUIRE(req["tool_choice"]["name"] == "explain_leak");
 }
 
-TEST_CASE("applyToolChoice — Gemini needs BOTH mode and the allow-list",
+TEST_CASE("applyToolChoice -Gemini needs BOTH mode and the allow-list",
           "[llm][tools][force]") {
     json req;
     applyToolChoice(req, LLMProvider::GEMINI, "explain_leak");
@@ -108,7 +108,7 @@ TEST_CASE("applyToolChoice — Gemini needs BOTH mode and the allow-list",
     REQUIRE(cfg["allowedFunctionNames"][0] == "explain_leak");
 }
 
-TEST_CASE("applyToolChoice — Ollama cannot force, and does not pretend to",
+TEST_CASE("applyToolChoice -Ollama cannot force, and does not pretend to",
           "[llm][tools][force]") {
     json req;
     applyToolChoice(req, LLMProvider::OLLAMA, "explain_leak");
@@ -118,7 +118,7 @@ TEST_CASE("applyToolChoice — Ollama cannot force, and does not pretend to",
     REQUIRE(req.empty());
 }
 
-TEST_CASE("applyToolChoice — an empty name is a no-op everywhere",
+TEST_CASE("applyToolChoice -an empty name is a no-op everywhere",
           "[llm][tools][force]") {
     for (auto p : {LLMProvider::OPENAI, LLMProvider::ANTHROPIC,
                    LLMProvider::GEMINI, LLMProvider::OLLAMA}) {
@@ -128,7 +128,7 @@ TEST_CASE("applyToolChoice — an empty name is a no-op everywhere",
     }
 }
 
-TEST_CASE("applyToolChoice — leaves the rest of the request alone",
+TEST_CASE("applyToolChoice -leaves the rest of the request alone",
           "[llm][tools][force]") {
     json req = {{"model", "gpt-4.1"}, {"messages", json::array()}};
     applyToolChoice(req, LLMProvider::OPENAI, "explain_leak");
@@ -140,7 +140,7 @@ TEST_CASE("applyToolChoice — leaves the rest of the request alone",
 // Message serialization
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("buildOllamaMessages — basic roles", "[llm][messages]") {
+TEST_CASE("buildOllamaMessages -basic roles", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"system", "You are helpful.", {}, ""},
         {"user", "Hello", {}, ""},
@@ -152,7 +152,7 @@ TEST_CASE("buildOllamaMessages — basic roles", "[llm][messages]") {
     REQUIRE(arr[1]["content"] == "Hello");
 }
 
-TEST_CASE("buildOllamaMessages — tool_calls arguments stay an OBJECT", "[llm][messages]") {
+TEST_CASE("buildOllamaMessages -tool_calls arguments stay an OBJECT", "[llm][messages]") {
     // Ollama rejects the whole request when `arguments` is a JSON string, with
     // an error that reads like a malformed body rather than a type mismatch:
     //   {"error":"Value looks like object, but can't find closing '}' symbol"}
@@ -171,7 +171,7 @@ TEST_CASE("buildOllamaMessages — tool_calls arguments stay an OBJECT", "[llm][
     REQUIRE(args["date"] == "2026-08-14");
 }
 
-TEST_CASE("buildOpenAIMessages — tool_calls arguments stay a STRING", "[llm][messages]") {
+TEST_CASE("buildOpenAIMessages -tool_calls arguments stay a STRING", "[llm][messages]") {
     // The mirror of the case above: OpenAI wants the opposite, so the two
     // builders must NOT be collapsed back into one.
     ChatMessage assistant;
@@ -184,7 +184,7 @@ TEST_CASE("buildOpenAIMessages — tool_calls arguments stay a STRING", "[llm][m
     REQUIRE(args.get<std::string>().find("2026-08-14") != std::string::npos);
 }
 
-TEST_CASE("buildOpenAIMessages — tool result includes tool_call_id", "[llm][messages]") {
+TEST_CASE("buildOpenAIMessages -tool result includes tool_call_id", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"tool", "{\"temp\": 72}", {}, "call_123"},
     };
@@ -193,7 +193,7 @@ TEST_CASE("buildOpenAIMessages — tool result includes tool_call_id", "[llm][me
     REQUIRE(arr[0]["role"] == "tool");
 }
 
-TEST_CASE("buildAnthropicMessages — system extracted", "[llm][messages]") {
+TEST_CASE("buildAnthropicMessages -system extracted", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"system", "Be concise.", {}, ""},
         {"user", "Hi", {}, ""},
@@ -204,7 +204,7 @@ TEST_CASE("buildAnthropicMessages — system extracted", "[llm][messages]") {
     REQUIRE(result.messages[0]["role"] == "user");
 }
 
-TEST_CASE("buildAnthropicMessages — tool result as user content block", "[llm][messages]") {
+TEST_CASE("buildAnthropicMessages -tool result as user content block", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"tool", "72 degrees", {}, "toolu_abc"},
     };
@@ -216,7 +216,7 @@ TEST_CASE("buildAnthropicMessages — tool result as user content block", "[llm]
     REQUIRE(content[0]["tool_use_id"] == "toolu_abc");
 }
 
-TEST_CASE("buildAnthropicMessages — assistant with tool_calls", "[llm][messages]") {
+TEST_CASE("buildAnthropicMessages -assistant with tool_calls", "[llm][messages]") {
     ToolCall tc;
     tc.id = "toolu_123";
     tc.name = "get_weather";
@@ -233,7 +233,7 @@ TEST_CASE("buildAnthropicMessages — assistant with tool_calls", "[llm][message
     REQUIRE(content[0]["input"]["city"] == "NYC");
 }
 
-TEST_CASE("buildGeminiMessages — role mapping", "[llm][messages]") {
+TEST_CASE("buildGeminiMessages -role mapping", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"user", "Hi", {}, ""},
         {"assistant", "Hello!", {}, ""},
@@ -244,7 +244,7 @@ TEST_CASE("buildGeminiMessages — role mapping", "[llm][messages]") {
     REQUIRE(arr[1]["parts"][0]["text"] == "Hello!");
 }
 
-TEST_CASE("buildGeminiMessages — system messages skipped", "[llm][messages]") {
+TEST_CASE("buildGeminiMessages -system messages skipped", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"system", "Ignored", {}, ""},
         {"user", "Hi", {}, ""},
@@ -254,7 +254,7 @@ TEST_CASE("buildGeminiMessages — system messages skipped", "[llm][messages]") 
     REQUIRE(arr[0]["role"] == "user");
 }
 
-TEST_CASE("buildGeminiMessages — tool result as functionResponse", "[llm][messages]") {
+TEST_CASE("buildGeminiMessages -tool result as functionResponse", "[llm][messages]") {
     std::vector<ChatMessage> msgs = {
         {"tool", "{\"temp\": 72}", {}, "get_weather"},
     };
@@ -268,7 +268,7 @@ TEST_CASE("buildGeminiMessages — tool result as functionResponse", "[llm][mess
 // Response parsing
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("parseOllamaToolResponse — text only", "[llm][parse]") {
+TEST_CASE("parseOllamaToolResponse -text only", "[llm][parse]") {
     json j = {{"message", {{"role", "assistant"}, {"content", "Hello!"}}}};
     auto r = parseOllamaToolResponse(j);
     REQUIRE(r.text == "Hello!");
@@ -276,7 +276,7 @@ TEST_CASE("parseOllamaToolResponse — text only", "[llm][parse]") {
     REQUIRE(r.stop_reason == "stop");
 }
 
-TEST_CASE("parseOllamaToolResponse — tool call", "[llm][parse]") {
+TEST_CASE("parseOllamaToolResponse -tool call", "[llm][parse]") {
     json j = {{"message", {
         {"role", "assistant"},
         {"content", ""},
@@ -291,7 +291,7 @@ TEST_CASE("parseOllamaToolResponse — tool call", "[llm][parse]") {
     REQUIRE(r.stop_reason == "tool_calls");
 }
 
-TEST_CASE("parseOpenAIToolResponse — tool call with string arguments", "[llm][parse]") {
+TEST_CASE("parseOpenAIToolResponse -tool call with string arguments", "[llm][parse]") {
     json j = {{"choices", json::array({
         {{"finish_reason", "tool_calls"},
          {"message", {
@@ -311,7 +311,7 @@ TEST_CASE("parseOpenAIToolResponse — tool call with string arguments", "[llm][
     REQUIRE(r.stop_reason == "tool_calls");
 }
 
-TEST_CASE("parseOpenAIToolResponse — text response", "[llm][parse]") {
+TEST_CASE("parseOpenAIToolResponse -text response", "[llm][parse]") {
     json j = {{"choices", json::array({
         {{"finish_reason", "stop"},
          {"message", {{"role", "assistant"}, {"content", "The weather is 72F."}}}}
@@ -322,7 +322,7 @@ TEST_CASE("parseOpenAIToolResponse — text response", "[llm][parse]") {
     REQUIRE(r.stop_reason == "stop");
 }
 
-TEST_CASE("parseAnthropicToolResponse — tool_use block", "[llm][parse]") {
+TEST_CASE("parseAnthropicToolResponse -tool_use block", "[llm][parse]") {
     json j = {
         {"stop_reason", "tool_use"},
         {"content", json::array({
@@ -339,7 +339,7 @@ TEST_CASE("parseAnthropicToolResponse — tool_use block", "[llm][parse]") {
     REQUIRE(r.stop_reason == "tool_use");
 }
 
-TEST_CASE("parseAnthropicToolResponse — end_turn text only", "[llm][parse]") {
+TEST_CASE("parseAnthropicToolResponse -end_turn text only", "[llm][parse]") {
     json j = {
         {"stop_reason", "end_turn"},
         {"content", json::array({
@@ -352,7 +352,7 @@ TEST_CASE("parseAnthropicToolResponse — end_turn text only", "[llm][parse]") {
     REQUIRE(r.stop_reason == "end_turn");
 }
 
-TEST_CASE("parseGeminiToolResponse — functionCall", "[llm][parse]") {
+TEST_CASE("parseGeminiToolResponse -functionCall", "[llm][parse]") {
     json j = {{"candidates", json::array({
         {{"finishReason", "STOP"},
          {"content", {{"parts", json::array({
@@ -365,7 +365,7 @@ TEST_CASE("parseGeminiToolResponse — functionCall", "[llm][parse]") {
     REQUIRE(r.tool_calls[0].arguments["city"] == "NYC");
 }
 
-TEST_CASE("parseGeminiToolResponse — text", "[llm][parse]") {
+TEST_CASE("parseGeminiToolResponse -text", "[llm][parse]") {
     json j = {{"candidates", json::array({
         {{"finishReason", "STOP"},
          {"content", {{"parts", json::array({
@@ -381,7 +381,7 @@ TEST_CASE("parseGeminiToolResponse — text", "[llm][parse]") {
 // Embedding response parsing
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("parseOllamaEmbedding — extracts float vector", "[llm][embed]") {
+TEST_CASE("parseOllamaEmbedding -extracts float vector", "[llm][embed]") {
     json j = {{"embedding", json::array({0.1, 0.2, 0.3})}};
     auto vec = parseOllamaEmbedding(j);
     REQUIRE(vec.size() == 3);
@@ -389,13 +389,13 @@ TEST_CASE("parseOllamaEmbedding — extracts float vector", "[llm][embed]") {
     REQUIRE_THAT(vec[2], Catch::Matchers::WithinAbs(0.3, 0.001));
 }
 
-TEST_CASE("parseOllamaEmbedding — empty when no embedding key", "[llm][embed]") {
+TEST_CASE("parseOllamaEmbedding -empty when no embedding key", "[llm][embed]") {
     json j = {{"error", "model not found"}};
     auto vec = parseOllamaEmbedding(j);
     REQUIRE(vec.empty());
 }
 
-TEST_CASE("parseOpenAIEmbedding — extracts from data[0].embedding", "[llm][embed]") {
+TEST_CASE("parseOpenAIEmbedding -extracts from data[0].embedding", "[llm][embed]") {
     json j = {{"data", json::array({
         {{"embedding", json::array({0.4, 0.5, 0.6})}, {"index", 0}}
     })}};
@@ -404,7 +404,7 @@ TEST_CASE("parseOpenAIEmbedding — extracts from data[0].embedding", "[llm][emb
     REQUIRE_THAT(vec[1], Catch::Matchers::WithinAbs(0.5, 0.001));
 }
 
-TEST_CASE("parseOpenAIEmbedding — empty when no data", "[llm][embed]") {
+TEST_CASE("parseOpenAIEmbedding -empty when no data", "[llm][embed]") {
     json j = {{"error", {{"message", "invalid"}}}};
     auto vec = parseOpenAIEmbedding(j);
     REQUIRE(vec.empty());
@@ -419,20 +419,20 @@ TEST_CASE("parseOpenAIEmbedding — empty when no data", "[llm][embed]") {
 // screen.
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("parseStreamLine — Ollama content frame", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Ollama content frame", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::OLLAMA,
         R"({"model":"gpt-oss:120b-cloud","message":{"role":"assistant","content":"Your AHI"},"done":false})");
     REQUIRE(d.has_value());
     REQUIRE(*d == "Your AHI");
 }
 
-TEST_CASE("parseStreamLine — Ollama final done frame carries no text", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Ollama final done frame carries no text", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::OLLAMA,
         R"({"model":"m","message":{"role":"assistant","content":""},"done":true,"total_duration":51})");
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — Ollama thinking field is NOT answer text", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Ollama thinking field is NOT answer text", "[llm][stream]") {
     // Captured from gpt-oss:120b on the relay 2026-08-14. Reasoning models on
     // Ollama emit `thinking` alongside an EMPTY `content` for the whole
     // reasoning phase (119 such frames in one measured turn). Emitting it would
@@ -442,7 +442,7 @@ TEST_CASE("parseStreamLine — Ollama thinking field is NOT answer text", "[llm]
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — Ollama takes no SSE framing", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Ollama takes no SSE framing", "[llm][stream]") {
     // Ollama is NDJSON. A data: prefix would mean we pointed the wrong parser
     // at the stream, and it must not silently half-work.
     auto d = parseStreamLine(LLMProvider::OLLAMA,
@@ -450,37 +450,37 @@ TEST_CASE("parseStreamLine — Ollama takes no SSE framing", "[llm][stream]") {
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — OpenAI delta", "[llm][stream]") {
+TEST_CASE("parseStreamLine -OpenAI delta", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::OPENAI,
         R"(data: {"choices":[{"index":0,"delta":{"content":"was 4.1"},"finish_reason":null}]})");
     REQUIRE(d.has_value());
     REQUIRE(*d == "was 4.1");
 }
 
-TEST_CASE("parseStreamLine — OpenAI role-only opening frame", "[llm][stream]") {
+TEST_CASE("parseStreamLine -OpenAI role-only opening frame", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::OPENAI,
         R"(data: {"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]})");
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — OpenAI [DONE] sentinel is not JSON", "[llm][stream]") {
+TEST_CASE("parseStreamLine -OpenAI [DONE] sentinel is not JSON", "[llm][stream]") {
     REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI, "data: [DONE]").has_value());
 }
 
-TEST_CASE("parseStreamLine — OpenAI finish frame", "[llm][stream]") {
+TEST_CASE("parseStreamLine -OpenAI finish frame", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::OPENAI,
         R"(data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})");
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — Anthropic text_delta", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Anthropic text_delta", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::ANTHROPIC,
         R"(data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"last night"}})");
     REQUIRE(d.has_value());
     REQUIRE(*d == "last night");
 }
 
-TEST_CASE("parseStreamLine — Anthropic thinking_delta is NOT answer text", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Anthropic thinking_delta is NOT answer text", "[llm][stream]") {
     // Rides the same channel as prose. Emitting it would put the model's
     // reasoning in front of the user.
     auto d = parseStreamLine(LLMProvider::ANTHROPIC,
@@ -488,13 +488,13 @@ TEST_CASE("parseStreamLine — Anthropic thinking_delta is NOT answer text", "[l
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — Anthropic input_json_delta is NOT answer text", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Anthropic input_json_delta is NOT answer text", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::ANTHROPIC,
         R"(data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}})");
     REQUIRE_FALSE(d.has_value());
 }
 
-TEST_CASE("parseStreamLine — Anthropic non-delta events", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Anthropic non-delta events", "[llm][stream]") {
     REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC,
         R"(data: {"type":"message_start","message":{"id":"msg_1"}})").has_value());
     REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC,
@@ -502,21 +502,21 @@ TEST_CASE("parseStreamLine — Anthropic non-delta events", "[llm][stream]") {
     REQUIRE_FALSE(parseStreamLine(LLMProvider::ANTHROPIC, "event: content_block_delta").has_value());
 }
 
-TEST_CASE("parseStreamLine — Gemini single part", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Gemini single part", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::GEMINI,
         R"(data: {"candidates":[{"content":{"parts":[{"text":"Tuesday"}],"role":"model"}}]})");
     REQUIRE(d.has_value());
     REQUIRE(*d == "Tuesday");
 }
 
-TEST_CASE("parseStreamLine — Gemini concatenates multiple parts in order", "[llm][stream]") {
+TEST_CASE("parseStreamLine -Gemini concatenates multiple parts in order", "[llm][stream]") {
     auto d = parseStreamLine(LLMProvider::GEMINI,
         R"(data: {"candidates":[{"content":{"parts":[{"text":"Tues"},{"text":"day"}]}}]})");
     REQUIRE(d.has_value());
     REQUIRE(*d == "Tuesday");
 }
 
-TEST_CASE("parseStreamLine — SSE noise yields nothing", "[llm][stream]") {
+TEST_CASE("parseStreamLine -SSE noise yields nothing", "[llm][stream]") {
     for (auto provider : {LLMProvider::OPENAI, LLMProvider::ANTHROPIC, LLMProvider::GEMINI}) {
         REQUIRE_FALSE(parseStreamLine(provider, "").has_value());          // separator
         REQUIRE_FALSE(parseStreamLine(provider, ": keep-alive").has_value());  // comment
@@ -525,7 +525,7 @@ TEST_CASE("parseStreamLine — SSE noise yields nothing", "[llm][stream]") {
     }
 }
 
-TEST_CASE("parseStreamLine — data: with no space after the colon", "[llm][stream]") {
+TEST_CASE("parseStreamLine -data: with no space after the colon", "[llm][stream]") {
     // The space is optional in the SSE spec even though every provider sends it.
     auto d = parseStreamLine(LLMProvider::OPENAI,
         R"(data:{"choices":[{"delta":{"content":"x"}}]})");
@@ -533,13 +533,13 @@ TEST_CASE("parseStreamLine — data: with no space after the colon", "[llm][stre
     REQUIRE(*d == "x");
 }
 
-TEST_CASE("parseStreamLine — malformed JSON does not throw", "[llm][stream]") {
+TEST_CASE("parseStreamLine -malformed JSON does not throw", "[llm][stream]") {
     // A truncated frame must cost one fragment, never the whole answer.
     REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI, R"(data: {"choices":[{"del)").has_value());
     REQUIRE_FALSE(parseStreamLine(LLMProvider::OLLAMA, "{not json at all").has_value());
 }
 
-TEST_CASE("parseStreamLine — empty content string is not a delta", "[llm][stream]") {
+TEST_CASE("parseStreamLine -empty content string is not a delta", "[llm][stream]") {
     // Emitting these would fire the consumer's callback for nothing.
     REQUIRE_FALSE(parseStreamLine(LLMProvider::OPENAI,
         R"(data: {"choices":[{"delta":{"content":""}}]})").has_value());
@@ -547,7 +547,7 @@ TEST_CASE("parseStreamLine — empty content string is not a delta", "[llm][stre
         R"({"message":{"content":""},"done":false})").has_value());
 }
 
-TEST_CASE("parseStreamLine — whitespace-only content IS a delta", "[llm][stream]") {
+TEST_CASE("parseStreamLine -whitespace-only content IS a delta", "[llm][stream]") {
     // The space between two words arrives as its own frame. Dropping it would
     // run the answer together.
     auto d = parseStreamLine(LLMProvider::OPENAI,
@@ -560,7 +560,7 @@ TEST_CASE("parseStreamLine — whitespace-only content IS a delta", "[llm][strea
 // OpenAIToolStream (generateStreamWithTools)
 // ═══════════════════════════════════════════════════════════════════════════
 
-TEST_CASE("OpenAIToolStream — a tool call assembled from its fragments", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -a tool call assembled from its fragments", "[llm][stream][tools]") {
     OpenAIToolStream s;
     REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"role":"assistant","content":null}}]})"));
     REQUIRE_FALSE(s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_night","arguments":""}}]}}]})"));
@@ -577,7 +577,7 @@ TEST_CASE("OpenAIToolStream — a tool call assembled from its fragments", "[llm
     REQUIRE(s.finishReason() == "tool_calls");
 }
 
-TEST_CASE("OpenAIToolStream — an answer streams as text with no calls", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -an answer streams as text with no calls", "[llm][stream][tools]") {
     OpenAIToolStream s;
     std::string text;
     for (const char* line : {
@@ -593,7 +593,7 @@ TEST_CASE("OpenAIToolStream — an answer streams as text with no calls", "[llm]
     REQUIRE(s.finishReason() == "stop");
 }
 
-TEST_CASE("OpenAIToolStream — parallel calls keep their order by index", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -parallel calls keep their order by index", "[llm][stream][tools]") {
     OpenAIToolStream s;
     s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two","arguments":"{}"}}]}}]})");
     s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"x\":1}"}}]}}]})");
@@ -604,7 +604,7 @@ TEST_CASE("OpenAIToolStream — parallel calls keep their order by index", "[llm
     REQUIRE(calls[1].name == "two");
 }
 
-TEST_CASE("OpenAIToolStream — unparseable arguments keep the call, empty", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -unparseable arguments keep the call, empty", "[llm][stream][tools]") {
     OpenAIToolStream s;
     s.feed(R"(data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{\"x\":"}}]}}]})");
     s.feed("data: {not json");
@@ -628,7 +628,7 @@ std::vector<std::string> fixtureLines(const std::string& name) {
 }
 }  // namespace
 
-TEST_CASE("OpenAIToolStream — a recorded tool-call round", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -a recorded tool-call round", "[llm][stream][tools]") {
     OpenAIToolStream s;
     std::string text;
     for (const auto& line : fixtureLines("openai_stream_tool_call.sse")) {
@@ -643,7 +643,7 @@ TEST_CASE("OpenAIToolStream — a recorded tool-call round", "[llm][stream][tool
     REQUIRE(s.finishReason() == "tool_calls");
 }
 
-TEST_CASE("OpenAIToolStream — a recorded answer round", "[llm][stream][tools]") {
+TEST_CASE("OpenAIToolStream -a recorded answer round", "[llm][stream][tools]") {
     OpenAIToolStream s;
     std::string text;
     int deltas = 0;
@@ -659,7 +659,7 @@ TEST_CASE("OpenAIToolStream — a recorded answer round", "[llm][stream][tools]"
 
 // Against the real API, and only when OPENAI_API_KEY is set: a tool round,
 // then the answer round streamed. Skipped everywhere else.
-TEST_CASE("generateStreamWithTools — live OpenAI, a tool round then a streamed answer",
+TEST_CASE("generateStreamWithTools -live OpenAI, a tool round then a streamed answer",
           "[llm][stream][tools][live]") {
     const char* key = std::getenv("OPENAI_API_KEY");
     if (!key || !*key) {
@@ -706,7 +706,7 @@ TEST_CASE("generateStreamWithTools — live OpenAI, a tool round then a streamed
     REQUIRE(stopped.tool_calls.empty());
 }
 
-TEST_CASE("generateStreamWithTools — a provider without streaming reports nothing on failure",
+TEST_CASE("generateStreamWithTools -a provider without streaming reports nothing on failure",
           "[llm][stream][tools]") {
     LLMConfig cfg;
     cfg.provider = LLMProvider::OLLAMA;

@@ -10,6 +10,9 @@
   breaks; it is parenthesised. A config test assigned a
   `std::filesystem::path` to a `std::string`, which on Windows converts only
   to a wide string; it calls `.string()`.
+- **The LLM tests run on Windows.** Their names used an em dash, which CTest
+  on Windows hands to Catch2 garbled ("No test cases matched"), so 62 tests
+  "failed" without running. Test names are ASCII now.
 - **CI no longer fails on the broker test when there is no broker.** The test
   calls Catch2's `SKIP()`, which exits 4, and CTest counted that as a failure.
   `mqtt_tests` now sets `SKIP_RETURN_CODE 4`, so it reports as skipped. Linux
