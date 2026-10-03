@@ -6,13 +6,35 @@
 
 namespace hms::time_utils {
 
+namespace {
+
+// gmtime_r and timegm are POSIX; MSVC spells them gmtime_s (arguments the
+// other way round) and _mkgmtime.
+void utcBreakdown(std::time_t t, std::tm& out) {
+#ifdef _WIN32
+    gmtime_s(&out, &t);
+#else
+    gmtime_r(&t, &out);
+#endif
+}
+
+std::time_t utcTimegm(std::tm* tm) {
+#ifdef _WIN32
+    return _mkgmtime(tm);
+#else
+    return timegm(tm);
+#endif
+}
+
+}  // namespace
+
 std::string to_iso8601(const TimePoint& tp) {
     auto time_t_val = Clock::to_time_t(tp);
     auto duration = tp.time_since_epoch();
     auto micros = std::chrono::duration_cast<std::chrono::microseconds>(duration).count() % 1000000;
 
     std::tm tm_val{};
-    gmtime_r(&time_t_val, &tm_val);
+    utcBreakdown(time_t_val, tm_val);
 
     std::ostringstream oss;
     oss << std::put_time(&tm_val, "%Y-%m-%dT%H:%M:%S");
@@ -57,7 +79,7 @@ std::optional<TimePoint> from_iso8601(const std::string& str) {
         }
     }
 
-    auto time_t_val = timegm(&tm_val);
+    auto time_t_val = utcTimegm(&tm_val);
     if (time_t_val == -1) return std::nullopt;
 
     auto tp = Clock::from_time_t(time_t_val);
@@ -73,7 +95,7 @@ std::optional<TimePoint> from_date_string(const std::string& str) {
     iss >> std::get_time(&tm_val, "%Y-%m-%d");
     if (iss.fail()) return std::nullopt;
 
-    auto time_t_val = timegm(&tm_val);
+    auto time_t_val = utcTimegm(&tm_val);
     if (time_t_val == -1) return std::nullopt;
 
     return Clock::from_time_t(time_t_val);
@@ -82,11 +104,11 @@ std::optional<TimePoint> from_date_string(const std::string& str) {
 TimePoint start_of_day(const TimePoint& tp) {
     auto time_t_val = Clock::to_time_t(tp);
     std::tm tm_val{};
-    gmtime_r(&time_t_val, &tm_val);
+    utcBreakdown(time_t_val, tm_val);
     tm_val.tm_hour = 0;
     tm_val.tm_min = 0;
     tm_val.tm_sec = 0;
-    return Clock::from_time_t(timegm(&tm_val));
+    return Clock::from_time_t(utcTimegm(&tm_val));
 }
 
 TimePoint end_of_day(const TimePoint& tp) {
@@ -101,7 +123,7 @@ std::string now_iso8601() {
 std::string to_date_string(const TimePoint& tp) {
     auto time_t_val = Clock::to_time_t(tp);
     std::tm tm_val{};
-    gmtime_r(&time_t_val, &tm_val);
+    utcBreakdown(time_t_val, tm_val);
 
     std::ostringstream oss;
     oss << std::put_time(&tm_val, "%Y-%m-%d");

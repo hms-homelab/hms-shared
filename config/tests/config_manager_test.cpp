@@ -13,7 +13,8 @@ struct TempConfig {
     std::string path;
 
     TempConfig(const std::string& content) {
-        path = fs::temp_directory_path() / "test_config.yaml";
+        // .string(): on Windows a path converts to a WIDE string only.
+        path = (fs::temp_directory_path() / "test_config.yaml").string();
         std::ofstream f(path);
         f << content;
     }

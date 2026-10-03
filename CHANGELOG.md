@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.6.17 (unreleased)
+
+### Fixed
+- **Builds on Windows (MSVC) again.** `time_utils.cpp` called `gmtime_r` and
+  `timegm`, which are POSIX; MSVC has `gmtime_s` and `_mkgmtime`. Both now go
+  through two small helpers that pick the right one. `llm_client.cpp` called
+  a bare `std::min`, which the `min()` macro from `windows.h` (through curl)
+  breaks; it is parenthesised. A config test assigned a
+  `std::filesystem::path` to a `std::string`, which on Windows converts only
+  to a wide string; it calls `.string()`.
+- **The LLM tests run on Windows.** Their names used an em dash, which CTest
+  on Windows hands to Catch2 garbled ("No test cases matched"), so 62 tests
+  "failed" without running. Test names are ASCII now.
+- **CI no longer fails on the broker test when there is no broker.** The test
+  calls Catch2's `SKIP()`, which exits 4, and CTest counted that as a failure.
+  `mqtt_tests` now sets `SKIP_RETURN_CODE 4`, so it reports as skipped. Linux
+  CI had been red on this since v1.6.15.
+
 ## v1.6.16 (2026-10-02)
 
 ### Added

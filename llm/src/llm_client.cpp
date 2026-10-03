@@ -208,7 +208,9 @@ size_t streamWriteCallback(void* contents, size_t size, size_t nmemb, void* user
 
     if (ctx->head.size() < 500) {
         ctx->head.append(static_cast<char*>(contents),
-                         std::min(n, size_t{500} - ctx->head.size()));
+                         // Parenthesised: windows.h (through curl) defines a
+                         // min() macro that eats a bare std::min.
+                         (std::min)(n, size_t{500} - ctx->head.size()));
     }
 
     ctx->pending.append(static_cast<char*>(contents), n);
