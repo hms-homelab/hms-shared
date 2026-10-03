@@ -166,5 +166,8 @@ if(HMS_SHARED_BUILD_TESTS)
         Catch2::Catch2WithMain
     )
 
-    catch_discover_tests(mqtt_tests)
+    # Catch2's SKIP() exits 4. Without SKIP_RETURN_CODE CTest counts that as a
+    # FAILURE, which is how a CI with no broker went red on a test that only
+    # meant to stand aside.
+    catch_discover_tests(mqtt_tests PROPERTIES SKIP_RETURN_CODE 4)
 endif()
