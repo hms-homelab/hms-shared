@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.6.17 (unreleased)
+## v1.6.17 (2026-10-03)
 
 ### Fixed
 - **Builds on Windows (MSVC) again.** `time_utils.cpp` called `gmtime_r` and
