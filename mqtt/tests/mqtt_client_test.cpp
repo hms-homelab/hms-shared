@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include "mqtt_client.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -109,4 +111,56 @@ TEST_CASE("Status returns to online after the broker drops the client", "[mqtt][
 
     // Leave no retained message behind on the broker.
     watcher.publish(status, "", 1, true);
+}
+
+// subscribe() held the client's lock across the Paho subscribe and its wait,
+// while Paho's receive thread held Paho's lock to deliver a message into that
+// same lock. A second subscribe made while the first one's retained messages
+// were still arriving hung both threads for good. A service subscribing to a
+// few topics at startup, one of them retained, is exactly that.
+TEST_CASE("A subscribe while retained messages arrive does not deadlock", "[mqtt][broker]") {
+    if (env("HMS_MQTT_TEST_BROKER").empty()) SKIP("HMS_MQTT_TEST_BROKER not set");
+
+    const std::string id = "hms_shared_dl_" + std::to_string(
+        std::chrono::system_clock::now().time_since_epoch().count());
+    constexpr int kRetained = 200;
+
+    auto seedCfg = brokerConfig();
+    seedCfg.client_id = id + "_seed";
+    hms::MqttClient seed(seedCfg);
+    REQUIRE(seed.connect());
+    for (int i = 0; i < kRetained; ++i)
+        seed.publish(id + "/a/" + std::to_string(i), "x", 1, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    Observer obs;
+    auto cfg = brokerConfig();
+    cfg.client_id = id;
+    auto client = std::make_unique<hms::MqttClient>(cfg);
+    REQUIRE(client->connect());
+
+    // On a thread with a deadline: a deadlock must fail the test, not hang CI.
+    auto done = std::make_shared<std::atomic<bool>>(false);
+    std::thread t([&, done] {
+        for (int round = 0; round < 20; ++round) {
+            client->subscribe(id + "/a/#", [&](const std::string&, const std::string& p) {
+                obs.add(p);
+            });
+            client->subscribe(id + "/b/" + std::to_string(round),
+                              [](const std::string&, const std::string&) {});
+        }
+        *done = true;
+    });
+    const bool finished = waitFor([&] { return done->load(); }, std::chrono::seconds(30));
+    if (!finished) {
+        t.detach();
+        client.release();   // its threads are wedged; destroying it would hang too
+        FAIL("subscribe deadlocked while retained messages were being delivered");
+    }
+    t.join();
+    CHECK(waitFor([&] { return obs.size() >= static_cast<size_t>(kRetained); },
+                  std::chrono::seconds(10)));
+
+    for (int i = 0; i < kRetained; ++i)
+        seed.publish(id + "/a/" + std::to_string(i), "", 1, true);
 }
