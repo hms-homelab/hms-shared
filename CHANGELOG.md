@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.6.18 (2026-10-04)
+
+### Fixed
+- **`MqttClient` could deadlock on a subscribe.** `subscribe()` held the
+  client's lock across the Paho subscribe and its wait, while Paho's receive
+  thread held Paho's lock to deliver a message into `message_arrived()`, which
+  takes the client's lock. A second subscribe made while the first one's
+  retained messages were still arriving hung both threads for good, and with
+  them every later publish and delivery. A service subscribing to a few topics
+  at startup, one of them retained, is exactly that. The lock now covers the
+  client's own subscription tables only: Paho is called, and callbacks run,
+  without it (`subscribe()`, `message_arrived()`, the re-subscribe in
+  `connected()`). A callback may now subscribe or publish too.
+- New broker test: 200 retained messages, then 20 rounds of two subscribes
+  under a 30 s deadline. It hangs on v1.6.17 and passes here.
+
 ## v1.6.17 (2026-10-03)
 
 ### Fixed

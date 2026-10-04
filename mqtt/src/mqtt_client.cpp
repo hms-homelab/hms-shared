@@ -112,13 +112,18 @@ bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, i
 
 void MqttClient::subscribe(const std::vector<std::string>& topics,
                             MessageCallback callback, int qos) {
-    std::lock_guard lock(mutex_);
-
-    for (const auto& topic : topics) {
-        subscriptions_[topic] = callback;
+    // The lock covers our own tables only, never a Paho call. Paho's receive
+    // thread holds Paho's lock while it delivers into message_arrived(), which
+    // takes this one; holding this one across the Paho subscribe (and its wait)
+    // is the opposite order, and a subscribe made while retained messages were
+    // arriving hung both threads.
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& topic : topics) {
+            subscriptions_[topic] = callback;
+        }
+        pending_subs_.push_back({topics, qos});
     }
-
-    pending_subs_.push_back({topics, qos});
 
     if (!client_ || !client_->is_connected()) return;
 
@@ -150,8 +155,13 @@ void MqttClient::connected(const std::string& cause) {
         publish(config_.topic_prefix + "/status", "online", 1, true);
     }
 
-    std::lock_guard lock(mutex_);
-    for (const auto& sub : pending_subs_) {
+    // A copy, so the Paho calls below run without our lock (see subscribe()).
+    std::vector<PendingSub> subs;
+    {
+        std::lock_guard lock(mutex_);
+        subs = pending_subs_;
+    }
+    for (const auto& sub : subs) {
         try {
             auto topic_coll = mqtt::string_collection::create(sub.topics);
             std::vector<int> qos_levels(sub.topics.size(), sub.qos);
@@ -171,16 +181,23 @@ void MqttClient::message_arrived(mqtt::const_message_ptr msg) {
     const auto& topic = msg->get_topic();
     auto payload = msg->get_payload_str();
 
-    std::lock_guard lock(mutex_);
-    for (const auto& [pattern, callback] : subscriptions_) {
-        if (topicMatches(pattern, topic)) {
-            try {
-                callback(topic, payload);
-            } catch (const std::exception& e) {
-                spdlog::error("MQTT: callback error for {}: {}", topic, e.what());
+    // Find the callback under the lock, run it without: a callback that
+    // subscribes or publishes must not reach Paho while we hold our lock.
+    MessageCallback callback;
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& [pattern, cb] : subscriptions_) {
+            if (topicMatches(pattern, topic)) {
+                callback = cb;
+                break;
             }
-            return;
         }
+    }
+    if (!callback) return;
+    try {
+        callback(topic, payload);
+    } catch (const std::exception& e) {
+        spdlog::error("MQTT: callback error for {}: {}", topic, e.what());
     }
 }
 
