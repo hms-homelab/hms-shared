@@ -34,6 +34,10 @@ nlohmann::json buildGeminiTools(const std::vector<ToolDefinition>& tools);
 void applyToolChoice(nlohmann::json& req, LLMProvider provider,
                      const std::string& tool);
 
+/// Anthropic with LLMConfig::prompt_cache: a top-level cache_control, which the
+/// API places on the last cacheable block. A no-op for every other provider.
+void applyPromptCache(nlohmann::json& req, LLMProvider provider, bool enabled);
+
 // ─── Message serialization ─────────────────────────────────────────────────
 
 nlohmann::json buildOllamaMessages(const std::vector<ChatMessage>& messages);

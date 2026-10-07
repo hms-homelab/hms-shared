@@ -741,6 +741,7 @@ LLMToolResponse LLMClient::generateWithTools(
     // One place, after the switch, so a provider added later cannot be given
     // tools and quietly miss its forcing field.
     tool_format::applyToolChoice(req, config_.provider, force_tool);
+    tool_format::applyPromptCache(req, config_.provider, config_.prompt_cache);
 
     std::string body = req.dump();
     auto response = httpPost(url, body, headers, abort_flag);
@@ -1131,6 +1132,11 @@ void applyToolChoice(json& req, LLMProvider provider, const std::string& tool) {
     }
 }
 
+void applyPromptCache(json& req, LLMProvider provider, bool enabled) {
+    if (!enabled || provider != LLMProvider::ANTHROPIC) return;
+    req["cache_control"] = {{"type", "ephemeral"}};
+}
+
 json buildAnthropicTools(const std::vector<ToolDefinition>& tools) {
     json arr = json::array();
     for (const auto& t : tools) {
@@ -1233,7 +1239,11 @@ AnthropicMessageResult buildAnthropicMessages(const std::vector<ChatMessage>& me
             continue;
         }
 
-        if (m.role == "assistant" && !m.tool_calls.empty()) {
+        if (m.role == "assistant" && m.provider_content.is_array() && !m.provider_content.empty()) {
+            // The blocks as the model returned them: a thinking block rebuilt
+            // or dropped is one the API will not accept back.
+            result.messages.push_back({{"role", "assistant"}, {"content", m.provider_content}});
+        } else if (m.role == "assistant" && !m.tool_calls.empty()) {
             json content = json::array();
             if (!m.content.empty()) {
                 content.push_back({{"type", "text"}, {"text", m.content}});
@@ -1372,6 +1382,7 @@ LLMToolResponse parseAnthropicToolResponse(const json& j) {
         result.stop_reason = j["stop_reason"].get<std::string>();
     }
     if (j.contains("content")) {
+        result.provider_content = j["content"];
         for (const auto& block : j["content"]) {
             if (block["type"] == "text") {
                 result.text = block["text"].get<std::string>();
