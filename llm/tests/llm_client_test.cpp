@@ -96,6 +96,20 @@ TEST_CASE("applyToolChoice -Anthropic names the tool", "[llm][tools][force]") {
     REQUIRE(req["tool_choice"]["name"] == "explain_leak");
 }
 
+TEST_CASE("applyPromptCache -Anthropic only, and only when asked", "[llm][cache]") {
+    json req;
+    applyPromptCache(req, LLMProvider::ANTHROPIC, true);
+    REQUIRE(req["cache_control"]["type"] == "ephemeral");
+
+    json off;
+    applyPromptCache(off, LLMProvider::ANTHROPIC, false);
+    REQUIRE_FALSE(off.contains("cache_control"));
+
+    json other;
+    applyPromptCache(other, LLMProvider::OPENAI, true);
+    REQUIRE_FALSE(other.contains("cache_control"));
+}
+
 TEST_CASE("applyToolChoice -Gemini needs BOTH mode and the allow-list",
           "[llm][tools][force]") {
     json req;
@@ -350,6 +364,35 @@ TEST_CASE("parseAnthropicToolResponse -end_turn text only", "[llm][parse]") {
     REQUIRE(r.text == "The weather is 72F.");
     REQUIRE(r.tool_calls.empty());
     REQUIRE(r.stop_reason == "end_turn");
+}
+
+TEST_CASE("parseAnthropicToolResponse -keeps the content blocks as returned", "[llm][parse]") {
+    json content = json::array({
+        {{"type", "thinking"}, {"thinking", ""}, {"signature", "sig-abc"}},
+        {{"type", "tool_use"}, {"id", "toolu_1"}, {"name", "disk_usage"},
+         {"input", {{"mount", "/mnt/data"}}}}
+    });
+    auto r = parseAnthropicToolResponse({{"stop_reason", "tool_use"}, {"content", content}});
+    REQUIRE(r.provider_content == content);
+    REQUIRE(r.tool_calls.size() == 1);
+}
+
+TEST_CASE("buildAnthropicMessages -assistant provider_content is sent back unchanged", "[llm][messages]") {
+    json content = json::array({
+        {{"type", "thinking"}, {"thinking", ""}, {"signature", "sig-abc"}},
+        {{"type", "tool_use"}, {"id", "toolu_1"}, {"name", "disk_usage"},
+         {"input", {{"mount", "/mnt/data"}}}}
+    });
+    ToolCall tc;
+    tc.id = "toolu_1";
+    tc.name = "disk_usage";
+    tc.arguments = {{"mount", "/mnt/data"}};
+    ChatMessage m{"assistant", "", {tc}, ""};
+    m.provider_content = content;
+    auto result = buildAnthropicMessages({m});
+    REQUIRE(result.messages.size() == 1);
+    REQUIRE(result.messages[0]["role"] == "assistant");
+    REQUIRE(result.messages[0]["content"] == content);
 }
 
 TEST_CASE("parseGeminiToolResponse -functionCall", "[llm][parse]") {

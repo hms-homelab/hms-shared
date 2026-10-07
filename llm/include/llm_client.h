@@ -44,6 +44,11 @@ struct LLMConfig {
     long timeout_seconds = 120;
     long connect_timeout_seconds = 10;
     int keep_alive_seconds = 0;   // Ollama only: 0 = unload model after call (evict from VRAM)
+    /// Anthropic only: mark the request for prompt caching (a top-level
+    /// cache_control, which the API places on the last cacheable block). Worth
+    /// it for a tool loop that resends the same prefix every turn; a one-shot
+    /// call pays the cache write for nothing.
+    bool prompt_cache = false;
 };
 
 /**
@@ -89,6 +94,11 @@ struct ChatMessage {
     std::string content;
     std::vector<ToolCall> tool_calls;   // when role=="assistant"
     std::string tool_call_id;           // when role=="tool"
+    /// Anthropic only, role=="assistant": the content blocks exactly as the
+    /// model returned them (LLMToolResponse::provider_content). When set they
+    /// are sent back as they are instead of being rebuilt from content and
+    /// tool_calls, which keeps the thinking blocks a tool loop must return.
+    nlohmann::json provider_content;
 };
 
 /**
@@ -100,6 +110,10 @@ struct LLMToolResponse {
     bool was_aborted = false;
     double elapsed_seconds = 0;
     std::string stop_reason;      // "end_turn", "tool_use", "stop", etc.
+    /// Anthropic, non-streaming only: the response's content array as it came
+    /// (thinking, text and tool_use blocks). Hand it back on the assistant
+    /// ChatMessage of the next turn.
+    nlohmann::json provider_content;
     /// generateStreamWithTools only: the StreamCallback returned false. `text`
     /// then holds what had arrived up to that point, which the caller has seen.
     bool stopped_by_consumer = false;

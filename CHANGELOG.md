@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.6.19 (2026-10-07)
+
+### Added
+- **Prompt caching for Anthropic tool loops.** `LLMConfig::prompt_cache`
+  (default off) adds a top-level `cache_control: {type: ephemeral}` to
+  `generateWithTools` requests, which the API places on the last cacheable
+  block. A tool loop resends the system prompt, the tool list and the whole
+  conversation on every turn; with caching on, the unchanged prefix is billed
+  at the cache-read rate. Off by default because a one-shot call would pay the
+  cache write for nothing.
+
+### Fixed
+- **Anthropic tool loops send the assistant turn back as it came.** The
+  assistant message was rebuilt from its text and tool calls, which dropped
+  any `thinking` block. Current Claude models think by default and expect
+  those blocks returned unchanged in the next turn of a tool loop.
+  `parseAnthropicToolResponse` now keeps the response's content array in
+  `LLMToolResponse::provider_content`; set it on the assistant `ChatMessage`
+  (`provider_content`) and `buildAnthropicMessages` sends it verbatim. A
+  message without it is built as before.
+
 ## v1.6.18 (2026-10-04)
 
 ### Fixed
