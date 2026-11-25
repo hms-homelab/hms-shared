@@ -793,3 +793,125 @@ TEST_CASE("generateStreamWithTools -a provider without streaming reports nothing
     oa.provider = LLMProvider::OPENAI;
     REQUIRE(LLMClient(oa).supportsStreamingTools());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Usage: what one call was billed for (v1.8.0)
+// ═══════════════════════════════════════════════════════════════════════════
+
+TEST_CASE("parseUsage -Anthropic keeps cache write and cache read apart", "[llm][usage]") {
+    auto j = json::parse(R"({"usage":{"input_tokens":812,"cache_creation_input_tokens":1030120,
+        "cache_read_input_tokens":0,"output_tokens":312}})");
+    auto u = parseUsage(LLMProvider::ANTHROPIC, j);
+    REQUIRE(u.reported);
+    REQUIRE(u.input_tokens == 812);
+    REQUIRE(u.cache_write_tokens == 1030120);
+    REQUIRE(u.cache_read_tokens == 0);
+    REQUIRE(u.output_tokens == 312);
+}
+
+TEST_CASE("parseUsage -OpenAI subtracts cached tokens from the prompt", "[llm][usage]") {
+    auto j = json::parse(R"({"usage":{"prompt_tokens":1000,"completion_tokens":50,
+        "prompt_tokens_details":{"cached_tokens":600}}})");
+    auto u = parseUsage(LLMProvider::OPENAI, j);
+    REQUIRE(u.reported);
+    REQUIRE(u.input_tokens == 400);
+    REQUIRE(u.cache_read_tokens == 600);
+    REQUIRE(u.cache_write_tokens == 0);
+    REQUIRE(u.output_tokens == 50);
+}
+
+TEST_CASE("parseUsage -Ollama native counts, no cache", "[llm][usage]") {
+    auto j = json::parse(R"({"message":{"content":"hi"},"done":true,
+        "prompt_eval_count":277,"eval_count":501})");
+    auto u = parseUsage(LLMProvider::OLLAMA, j);
+    REQUIRE(u.reported);
+    REQUIRE(u.input_tokens == 277);
+    REQUIRE(u.output_tokens == 501);
+    REQUIRE(u.cache_read_tokens == 0);
+    REQUIRE(u.cache_write_tokens == 0);
+}
+
+TEST_CASE("parseUsage -Gemini adds thinking to output and subtracts the cache", "[llm][usage]") {
+    auto j = json::parse(R"({"usageMetadata":{"promptTokenCount":900,"cachedContentTokenCount":100,
+        "candidatesTokenCount":40,"thoughtsTokenCount":60}})");
+    auto u = parseUsage(LLMProvider::GEMINI, j);
+    REQUIRE(u.input_tokens == 800);
+    REQUIRE(u.cache_read_tokens == 100);
+    REQUIRE(u.output_tokens == 100);
+}
+
+TEST_CASE("parseUsage -a body with no usage is not reported, not free", "[llm][usage]") {
+    for (auto p : {LLMProvider::OLLAMA, LLMProvider::OPENAI, LLMProvider::ANTHROPIC,
+                   LLMProvider::GEMINI}) {
+        auto u = parseUsage(p, json::parse(R"({"choices":[],"content":[]})"));
+        REQUIRE_FALSE(u.reported);
+        REQUIRE(u.input_tokens == 0);
+    }
+}
+
+TEST_CASE("tool response parsers carry the usage", "[llm][usage][tools]") {
+    auto a = parseAnthropicToolResponse(json::parse(
+        R"({"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+            "usage":{"input_tokens":10,"cache_read_input_tokens":20,"output_tokens":3}})"));
+    REQUIRE(a.usage.reported);
+    REQUIRE(a.usage.cache_read_tokens == 20);
+    auto o = parseOpenAIToolResponse(json::parse(
+        R"({"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":7,"completion_tokens":2}})"));
+    REQUIRE(o.usage.input_tokens == 7);
+    REQUIRE(o.usage.output_tokens == 2);
+    auto l = parseOllamaToolResponse(json::parse(
+        R"({"message":{"content":"ok"},"prompt_eval_count":5,"eval_count":4})"));
+    REQUIRE(l.usage.input_tokens == 5);
+    REQUIRE(l.usage.output_tokens == 4);
+}
+
+TEST_CASE("feedStreamUsage -Anthropic message_start then message_delta", "[llm][usage][stream]") {
+    LLMUsage u;
+    feedStreamUsage(LLMProvider::ANTHROPIC, "event: message_start", u);
+    REQUIRE_FALSE(u.reported);
+    feedStreamUsage(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":3000,"cache_read_input_tokens":15000,"output_tokens":1}}})", u);
+    feedStreamUsage(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}})", u);
+    feedStreamUsage(LLMProvider::ANTHROPIC,
+        R"(data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":87}})", u);
+    REQUIRE(u.reported);
+    REQUIRE(u.input_tokens == 12);
+    REQUIRE(u.cache_write_tokens == 3000);
+    REQUIRE(u.cache_read_tokens == 15000);
+    REQUIRE(u.output_tokens == 87);
+}
+
+TEST_CASE("feedStreamUsage -OpenAI usage chunk, nulls on the others", "[llm][usage][stream]") {
+    LLMUsage u;
+    feedStreamUsage(LLMProvider::OPENAI,
+        R"(data: {"choices":[{"delta":{"content":"Hi"}}],"usage":null})", u);
+    REQUIRE_FALSE(u.reported);
+    feedStreamUsage(LLMProvider::OPENAI,
+        R"(data: {"choices":[],"usage":{"prompt_tokens":300,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":100}}})", u);
+    feedStreamUsage(LLMProvider::OPENAI, "data: [DONE]", u);
+    REQUIRE(u.reported);
+    REQUIRE(u.input_tokens == 200);
+    REQUIRE(u.cache_read_tokens == 100);
+    REQUIRE(u.output_tokens == 20);
+}
+
+TEST_CASE("feedStreamUsage -Ollama only the done frame counts", "[llm][usage][stream]") {
+    LLMUsage u;
+    feedStreamUsage(LLMProvider::OLLAMA, R"({"message":{"content":"Hi"},"done":false})", u);
+    REQUIRE_FALSE(u.reported);
+    feedStreamUsage(LLMProvider::OLLAMA,
+        R"({"message":{"content":""},"done":true,"prompt_eval_count":40,"eval_count":9})", u);
+    REQUIRE(u.input_tokens == 40);
+    REQUIRE(u.output_tokens == 9);
+}
+
+TEST_CASE("feedStreamUsage -a malformed line changes nothing", "[llm][usage][stream]") {
+    LLMUsage u;
+    u.input_tokens = 5;
+    u.reported = true;
+    feedStreamUsage(LLMProvider::ANTHROPIC, "data: {not json", u);
+    feedStreamUsage(LLMProvider::OLLAMA, "", u);
+    REQUIRE(u.input_tokens == 5);
+}

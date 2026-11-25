@@ -817,6 +817,8 @@ LLMResponse LLMClient::generateStream(const std::vector<ChatMessage>& messages,
             req["messages"] = tool_format::buildOpenAIMessages(messages);
             req["temperature"] = config_.temperature;
             req["max_completion_tokens"] = config_.max_tokens;
+            // Without it an OpenAI-compatible stream reports no usage at all.
+            req["stream_options"] = {{"include_usage", true}};
             std::string auth = "Authorization: Bearer " + config_.api_key;
             headers = curl_slist_append(headers, auth.c_str());
             break;
@@ -854,6 +856,7 @@ LLMResponse LLMClient::generateStream(const std::vector<ChatMessage>& messages,
     bool consumer_stopped = false;
 
     auto on_line = [&](const std::string& line) -> bool {
+        tool_format::feedStreamUsage(config_.provider, line, result.usage);
         auto delta = tool_format::parseStreamLine(config_.provider, line);
         if (!delta) return true;
         full += *delta;
@@ -921,6 +924,7 @@ LLMToolResponse LLMClient::generateStreamWithTools(const std::vector<ChatMessage
     req["tools"] = tool_format::buildOpenAITools(tools);
     req["temperature"] = config_.temperature;
     req["max_completion_tokens"] = config_.max_tokens;
+    req["stream_options"] = {{"include_usage", true}};
     tool_format::applyToolChoice(req, config_.provider, force_tool);
 
     struct curl_slist* headers = nullptr;
@@ -933,6 +937,7 @@ LLMToolResponse LLMClient::generateStreamWithTools(const std::vector<ChatMessage
     bool consumer_stopped = false;
 
     auto on_line = [&](const std::string& line) -> bool {
+        tool_format::feedStreamUsage(config_.provider, line, result.usage);
         auto delta = parser.feed(line);
         if (!delta) return true;
         full += *delta;
@@ -1350,6 +1355,7 @@ LLMToolResponse parseOllamaToolResponse(const json& j) {
         }
     }
     result.stop_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
+    result.usage = parseUsage(LLMProvider::OLLAMA, j);
     return result;
 }
 
@@ -1379,6 +1385,7 @@ LLMToolResponse parseOpenAIToolResponse(const json& j) {
             }
         }
     }
+    result.usage = parseUsage(LLMProvider::OPENAI, j);
     return result;
 }
 
@@ -1402,6 +1409,7 @@ LLMToolResponse parseAnthropicToolResponse(const json& j) {
             }
         }
     }
+    result.usage = parseUsage(LLMProvider::ANTHROPIC, j);
     return result;
 }
 
@@ -1426,6 +1434,7 @@ LLMToolResponse parseGeminiToolResponse(const json& j) {
             }
         }
     }
+    result.usage = parseUsage(LLMProvider::GEMINI, j);
     return result;
 }
 
@@ -1551,6 +1560,136 @@ std::optional<std::string> parseStreamLine(LLMProvider provider, const std::stri
 
     if (text.empty()) return std::nullopt;
     return text;
+}
+
+// ─── Usage parsing ─────────────────────────────────────────────────────────
+
+namespace {
+
+long long count(const json& obj, const char* key) {
+    if (!obj.is_object()) return 0;
+    auto it = obj.find(key);
+    if (it == obj.end() || !it->is_number()) return 0;
+    return it->get<long long>();
+}
+
+bool has(const json& obj, const char* key) {
+    return obj.is_object() && obj.contains(key) && obj[key].is_number();
+}
+
+// OpenAI's usage object, from a whole body or the last stream chunk.
+LLMUsage openAIUsage(const json& u) {
+    LLMUsage out;
+    if (!u.is_object()) return out;
+    long long cached = 0;
+    if (auto d = u.find("prompt_tokens_details"); d != u.end()) cached = count(*d, "cached_tokens");
+    const long long prompt = count(u, "prompt_tokens");
+    out.cache_read_tokens = cached;
+    out.input_tokens      = prompt > cached ? prompt - cached : 0;
+    out.output_tokens     = count(u, "completion_tokens");
+    out.reported          = has(u, "prompt_tokens") || has(u, "completion_tokens");
+    return out;
+}
+
+LLMUsage geminiUsage(const json& m) {
+    LLMUsage out;
+    if (!m.is_object()) return out;
+    const long long cached = count(m, "cachedContentTokenCount");
+    const long long prompt = count(m, "promptTokenCount");
+    out.cache_read_tokens = cached;
+    out.input_tokens      = prompt > cached ? prompt - cached : 0;
+    out.output_tokens     = count(m, "candidatesTokenCount") + count(m, "thoughtsTokenCount");
+    out.reported          = has(m, "promptTokenCount") || has(m, "candidatesTokenCount");
+    return out;
+}
+
+// Anthropic: every count it states overwrites ours. message_delta restates the
+// output count cumulatively and sometimes the input counts too.
+void anthropicFold(const json& u, LLMUsage& into) {
+    if (!u.is_object()) return;
+    bool any = false;
+    if (has(u, "input_tokens"))                { into.input_tokens       = count(u, "input_tokens"); any = true; }
+    if (has(u, "cache_creation_input_tokens")) { into.cache_write_tokens = count(u, "cache_creation_input_tokens"); any = true; }
+    if (has(u, "cache_read_input_tokens"))     { into.cache_read_tokens  = count(u, "cache_read_input_tokens"); any = true; }
+    if (has(u, "output_tokens"))               { into.output_tokens      = count(u, "output_tokens"); any = true; }
+    if (any) into.reported = true;
+}
+
+}  // namespace
+
+LLMUsage parseUsage(LLMProvider provider, const json& j) {
+    LLMUsage out;
+    if (!j.is_object()) return out;
+    switch (provider) {
+        case LLMProvider::OLLAMA:
+            out.input_tokens  = count(j, "prompt_eval_count");
+            out.output_tokens = count(j, "eval_count");
+            out.reported      = has(j, "prompt_eval_count") || has(j, "eval_count");
+            break;
+        case LLMProvider::OPENAI:
+            if (j.contains("usage")) out = openAIUsage(j["usage"]);
+            break;
+        case LLMProvider::ANTHROPIC:
+            if (j.contains("usage")) anthropicFold(j["usage"], out);
+            break;
+        case LLMProvider::GEMINI:
+            if (j.contains("usageMetadata")) out = geminiUsage(j["usageMetadata"]);
+            break;
+    }
+    return out;
+}
+
+void feedStreamUsage(LLMProvider provider, const std::string& line, LLMUsage& into) {
+    std::string payload;
+    if (provider == LLMProvider::OLLAMA) {
+        if (line.empty()) return;
+        payload = line;
+    } else {
+        auto p = ssePayload(line);
+        if (!p || *p == "[DONE]") return;
+        payload = *p;
+    }
+    json j;
+    try {
+        j = json::parse(payload);
+    } catch (const std::exception&) {
+        return;
+    }
+    if (!j.is_object()) return;
+
+    switch (provider) {
+        case LLMProvider::OLLAMA:
+            // Only the final frame carries counts.
+            if (j.value("done", false)) {
+                auto u = parseUsage(provider, j);
+                if (u.reported) into = u;
+            }
+            break;
+        case LLMProvider::OPENAI:
+            // The usage chunk has empty choices; every other chunk has
+            // "usage": null or no usage at all.
+            if (j.contains("usage") && j["usage"].is_object()) {
+                auto u = openAIUsage(j["usage"]);
+                if (u.reported) into = u;
+            }
+            break;
+        case LLMProvider::ANTHROPIC: {
+            const std::string type = j.value("type", "");
+            if (type == "message_start" && j.contains("message")) {
+                const auto& m = j["message"];
+                if (m.is_object() && m.contains("usage")) anthropicFold(m["usage"], into);
+            } else if (type == "message_delta" && j.contains("usage")) {
+                anthropicFold(j["usage"], into);
+            }
+            break;
+        }
+        case LLMProvider::GEMINI:
+            if (j.contains("usageMetadata")) {
+                auto u = geminiUsage(j["usageMetadata"]);
+                if (u.reported) into = u;
+            }
+            break;
+    }
 }
 
 std::optional<std::string> OpenAIToolStream::feed(const std::string& line) {

@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.8.0 (2026-11-25)
+
+### Added
+- **Every call reports what it was billed for.** New `LLMUsage` (fresh input,
+  cache write, cache read, output, and `reported`) on `LLMToolResponse` and
+  `LLMResponse`, filled by `generateWithTools`, `generateStream` and
+  `generateStreamWithTools` for all four providers. Cache write and cache read
+  are kept apart, because a prefix that is written on every call instead of
+  read looks the same in one input total and costs many times more.
+  Providers that fold cached tokens into their prompt count (OpenAI, Gemini)
+  have them subtracted from `input_tokens`, so nothing is counted twice.
+  `reported` is false when the provider sent no usage: the zeros then mean
+  "unknown", not "free".
+- `tool_format::parseUsage(provider, body)` and
+  `tool_format::feedStreamUsage(provider, line, usage)`, testable with no HTTP.
+
+### Changed
+- OpenAI-compatible streams ask for `stream_options: {include_usage: true}`,
+  without which they report no usage at all. The last chunk then carries
+  `usage` and empty `choices`, which the text and tool parsers already skip.
+
 ## v1.7.0 (2026-11-25)
 
 ### Added

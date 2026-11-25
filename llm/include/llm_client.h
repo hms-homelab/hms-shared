@@ -65,12 +65,39 @@ struct LLMImage {
 };
 
 /**
+ * The tokens ONE call was billed for, as the provider reported them.
+ *
+ * Four separate counts, because they are priced separately and a caching bug
+ * shows only in the split: a prefix that should be READ from the cache on every
+ * call but is WRITTEN each time costs many times more and looks the same in a
+ * single "input" total.
+ *
+ * `input_tokens` is fresh input only. Providers that fold cached tokens into
+ * their prompt count (OpenAI's prompt_tokens, Gemini's promptTokenCount) have
+ * them subtracted here, so the four always add up to what was sent and received
+ * with nothing counted twice. Ollama reports no cache, so its two cache counts
+ * stay 0.
+ *
+ * `reported` is false when the provider sent no usage at all. The counts are
+ * then 0, which a caller must not read as "free": it should estimate.
+ */
+struct LLMUsage {
+    long long input_tokens = 0;
+    long long cache_write_tokens = 0;
+    long long cache_read_tokens = 0;
+    long long output_tokens = 0;   // thinking included where the provider counts it there
+    bool reported = false;
+};
+
+/**
  * Response from a vision/generate call with metadata
  */
 struct LLMResponse {
     std::optional<std::string> text;
     bool was_aborted = false;
     double elapsed_seconds = 0;
+    /// generateStream only: what the provider billed for this call.
+    LLMUsage usage;
 };
 
 /**
@@ -122,6 +149,9 @@ struct LLMToolResponse {
     /// generateStreamWithTools only: the StreamCallback returned false. `text`
     /// then holds what had arrived up to that point, which the caller has seen.
     bool stopped_by_consumer = false;
+    /// What the provider billed for this call (generateWithTools and
+    /// generateStreamWithTools).
+    LLMUsage usage;
 };
 
 /**

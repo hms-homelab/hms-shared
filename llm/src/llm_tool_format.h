@@ -76,6 +76,35 @@ LLMToolResponse parseGeminiToolResponse(const nlohmann::json& j);
  */
 std::optional<std::string> parseStreamLine(LLMProvider provider, const std::string& line);
 
+// ─── Usage parsing ─────────────────────────────────────────────────────────
+
+/**
+ * The usage a whole (non-streamed) response body reports. `reported` is false
+ * when the body carries none.
+ *
+ *   OLLAMA     prompt_eval_count, eval_count (no cache)
+ *   OPENAI     usage.prompt_tokens (cached tokens subtracted),
+ *              usage.prompt_tokens_details.cached_tokens, usage.completion_tokens
+ *   ANTHROPIC  usage.input_tokens, cache_creation_input_tokens,
+ *              cache_read_input_tokens, output_tokens
+ *   GEMINI     usageMetadata.promptTokenCount (cached subtracted),
+ *              cachedContentTokenCount, candidatesTokenCount + thoughtsTokenCount
+ */
+LLMUsage parseUsage(LLMProvider provider, const nlohmann::json& j);
+
+/**
+ * Fold whatever usage ONE raw stream line carries into `into`.
+ *
+ *   OLLAMA     the final done:true frame
+ *   OPENAI     the last chunk, sent when the request asks stream_options.include_usage
+ *   ANTHROPIC  message_start (input and cache counts) and message_delta
+ *              (the output count, cumulative; any count it restates wins)
+ *   GEMINI     usageMetadata on any chunk, the last one wins
+ *
+ * Lines with no usage leave `into` untouched.
+ */
+void feedStreamUsage(LLMProvider provider, const std::string& line, LLMUsage& into);
+
 /**
  * One OpenAI chat-completions stream WITH tools, fed line by line.
  *
