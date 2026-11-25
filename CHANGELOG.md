@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.7.0 (2026-11-25)
+
+### Added
+- **Bearer auth for Anthropic-compatible endpoints.** `LLMConfig::auth_scheme`
+  (default `"x-api-key"`) selects how the ANTHROPIC provider presents its key.
+  `"bearer"` sends `Authorization: Bearer <key>` instead, which servers that
+  speak the Messages API but reject `x-api-key` (for example ollama.com's
+  `/v1/messages`) require. Applies to `generate`, `generateVision`,
+  `generateWithTools` and `generateStream`. New static
+  `LLMClient::anthropicAuthHeader(config)` builds the header line. The default
+  is unchanged, so existing callers send exactly what they sent before.
+
 ## v1.6.19 (2026-10-07)
 
 ### Added
