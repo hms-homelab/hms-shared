@@ -50,6 +50,13 @@ std::string LLMClient::providerName(LLMProvider provider) {
     return "unknown";
 }
 
+std::string LLMClient::anthropicAuthHeader(const LLMConfig& config) {
+    std::string lower = config.auth_scheme;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower == "bearer") return "Authorization: Bearer " + config.api_key;
+    return "x-api-key: " + config.api_key;
+}
+
 std::string LLMClient::loadPromptFile(const std::string& filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) {
@@ -415,7 +422,7 @@ std::optional<std::string> LLMClient::generateGemini(const std::string& prompt) 
 // ─── ANTHROPIC ──────────────────────────────────────────────────────────────
 // POST /v1/messages
 // {"model":"…","max_tokens":1024,"messages":[{"role":"user","content":"…"}]}
-// Headers: x-api-key, anthropic-version
+// Headers: x-api-key (or Authorization: Bearer, LLMConfig::auth_scheme), anthropic-version
 // Response: {"content":[{"text":"…"}]}
 
 std::optional<std::string> LLMClient::generateAnthropic(const std::string& prompt) {
@@ -429,7 +436,7 @@ std::optional<std::string> LLMClient::generateAnthropic(const std::string& promp
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    std::string api_header = "x-api-key: " + config_.api_key;
+    std::string api_header = anthropicAuthHeader(config_);
     headers = curl_slist_append(headers, api_header.c_str());
     headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
 
@@ -603,7 +610,7 @@ std::optional<std::string> LLMClient::generateAnthropicVision(const std::string&
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
-    std::string api_header = "x-api-key: " + config_.api_key;
+    std::string api_header = anthropicAuthHeader(config_);
     headers = curl_slist_append(headers, api_header.c_str());
     headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
 
@@ -720,7 +727,7 @@ LLMToolResponse LLMClient::generateWithTools(
             if (!am.system_prompt.empty()) {
                 req["system"] = am.system_prompt;
             }
-            std::string api_header = "x-api-key: " + config_.api_key;
+            std::string api_header = anthropicAuthHeader(config_);
             headers = curl_slist_append(headers, api_header.c_str());
             headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
             break;
@@ -824,7 +831,7 @@ LLMResponse LLMClient::generateStream(const std::vector<ChatMessage>& messages,
             if (!am.system_prompt.empty()) {
                 req["system"] = am.system_prompt;
             }
-            std::string api_header = "x-api-key: " + config_.api_key;
+            std::string api_header = anthropicAuthHeader(config_);
             headers = curl_slist_append(headers, api_header.c_str());
             headers = curl_slist_append(headers, "anthropic-version: 2023-06-01");
             break;

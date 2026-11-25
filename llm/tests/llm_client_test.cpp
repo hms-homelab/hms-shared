@@ -15,6 +15,31 @@ using json = nlohmann::json;
 // toVectorLiteral
 // ═══════════════════════════════════════════════════════════════════════════
 
+TEST_CASE("anthropicAuthHeader -defaults to Anthropic's own x-api-key", "[llm][auth]") {
+    LLMConfig c;
+    c.api_key = "k1";
+    REQUIRE(c.auth_scheme == "x-api-key");
+    REQUIRE(LLMClient::anthropicAuthHeader(c) == "x-api-key: k1");
+}
+
+TEST_CASE("anthropicAuthHeader -bearer sends Authorization and no x-api-key", "[llm][auth]") {
+    LLMConfig c;
+    c.api_key = "k2";
+    c.auth_scheme = "bearer";
+    const auto h = LLMClient::anthropicAuthHeader(c);
+    REQUIRE(h == "Authorization: Bearer k2");
+    REQUIRE(h.find("x-api-key") == std::string::npos);
+    c.auth_scheme = "Bearer";
+    REQUIRE(LLMClient::anthropicAuthHeader(c) == "Authorization: Bearer k2");
+}
+
+TEST_CASE("anthropicAuthHeader -an unknown scheme falls back to x-api-key", "[llm][auth]") {
+    LLMConfig c;
+    c.api_key = "k3";
+    c.auth_scheme = "basic";
+    REQUIRE(LLMClient::anthropicAuthHeader(c) == "x-api-key: k3");
+}
+
 TEST_CASE("toVectorLiteral -empty vector", "[llm][embed]") {
     REQUIRE(LLMClient::toVectorLiteral({}) == "[]");
 }

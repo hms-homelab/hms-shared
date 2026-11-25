@@ -26,7 +26,7 @@ enum class LLMProvider {
     OLLAMA,     // Ollama native: <endpoint>/api/generate (no auth)
     OPENAI,     // ANY OpenAI-compatible server: <endpoint>/v1/chat/completions (Bearer)
     GEMINI,     // Google Gemini: <endpoint>/v1beta/models/{model}:generateContent (API key)
-    ANTHROPIC   // Claude: <endpoint>/v1/messages (x-api-key header)
+    ANTHROPIC   // Claude: <endpoint>/v1/messages (x-api-key, or Bearer via auth_scheme)
 };
 
 /**
@@ -49,6 +49,11 @@ struct LLMConfig {
     /// it for a tool loop that resends the same prefix every turn; a one-shot
     /// call pays the cache write for nothing.
     bool prompt_cache = false;
+    /// Anthropic only: how the key is presented. "x-api-key" (the default,
+    /// Anthropic's own header) or "bearer" (`Authorization: Bearer <key>`),
+    /// which an Anthropic-compatible endpoint such as ollama.com's
+    /// /v1/messages requires. Anything else is treated as "x-api-key".
+    std::string auth_scheme = "x-api-key";
 };
 
 /**
@@ -293,6 +298,10 @@ public:
      * Get provider display name
      */
     static std::string providerName(LLMProvider provider);
+
+    /// The Anthropic auth header line for `config.auth_scheme`:
+    /// "Authorization: Bearer <key>" for "bearer", else "x-api-key: <key>".
+    static std::string anthropicAuthHeader(const LLMConfig& config);
 
     /**
      * Load prompt template from file, replacing {placeholder} tokens.
